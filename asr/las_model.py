@@ -9,12 +9,13 @@ from keras.models import Model
 from keras.layers import Input
 from keras.layers.embeddings import Embedding
 from keras.layers.core import Flatten, Reshape
-from ..common import check_and_throw_if_fail, BiDirectionalLayer, AttentionLayer, GRUCell, RNNLayer, MLPClassifierLayer, categorical_crossentropy_ex
+from ..common import check_and_throw_if_fail, BiDirectionalLayer, AttentionLayer, RNNBeamSearchDecoder, GRUCell, RNNLayer, MLPClassifierLayer, categorical_crossentropy_ex
 
 
 def build_model(max_timesteps, input_dim, recurrent_input_lengths,
                  target_vacabuary_size, target_embedding_dim,
-                 target_initia_embedding, recurrent_output_dim, max_output_length, output_dim, hidden_unit_numbers, hidden_unit_activation_functions):
+                 target_initia_embedding, recurrent_output_dim, max_output_length, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
+                 max_output_length, beam_size, number_of_output_sequence):
     spectrogram = Input(shape=(max_timesteps, input_dim))
     output = spectrogram
     # listen: recurrent Layers
@@ -41,5 +42,8 @@ def build_model(max_timesteps, input_dim, recurrent_input_lengths,
     las = Model(input=[spectrogram, output_true], output=output)
     # TODO: try advanced loss function based on negative sampling
     las.compile(optimizer='rmsprop', loss=categorical_crossentropy_ex, metrics=['accuracy'])
-
-    return (las,)
+    bos = Input(shape=(1,))
+    decoder = RNNBeamSearchDecoder(rnn_cell, attention, output_embedding, mlp_classifier)(output_true, source_context, max_output_length, beam_size, number_of_output_sequence)
+    pathes, path_scores = decoder (bos, source_context)
+    las_runtime = Model(input=[spectrogram, bos], output=[pathes, path_scores])
+    return (las, las_runtime)

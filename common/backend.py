@@ -17,11 +17,16 @@ def shape(x):
 if K._BACKEND == 'theano':
     def  unpack(x):
         return [x[i] for i in range(shape(x)[0])]
+    def top_k(x, k):
+        raise Exception('Not implemented yet!')
 
 elif K._BACKEND == 'tensorflow':
     import tensorflow as tf
     def  unpack(x):
         return tf.unpack(x)
+    # Finds values and indices of the k largest entries for the last dimension.
+    def top_k(x, k):
+        return tf.nn.top_k(x, k)
 
 def inner_product(x, y):
     '''

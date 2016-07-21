@@ -6,7 +6,7 @@ Created on Jul 16, 2016
 
 from keras import backend as K
 from keras.engine import Layer
-from .backend import unpack, inner_product, shape
+from .backend import unpack, inner_product, shape, top_k
 from .utils import check_and_throw_if_fail
 from keras.layers import Dense, Activation, BatchNormalization
 from keras.layers.wrappers import TimeDistributed
@@ -333,20 +333,20 @@ def RNNLayer(RNNLayerBase):
         return outputs
 
 
-def RNNDecoderWithBeamSearch(RNNLayerBase):
+def RNNBeamSearchDecoder(RNNLayerBase):
     '''
     RNN based decoder for prediction, using beam search
     '''
-    def __init__(self, max_output_length, beam_size, number_of_output_sequence=1, **kwargs):
+    def __init__(self, max_output_length, beam_size, number_of_output_sequence=1, eos=None, **kwargs):
         check_and_throw_if_fail(max_output_length > 0, "check_and_throw_if_fail")
         check_and_throw_if_fail(beam_size > 0, "beam_size")
         check_and_throw_if_fail(number_of_output_sequence > 0, "number_of_output_sequence")
         check_and_throw_if_fail(beam_size >= number_of_output_sequence, "number_of_output_sequence")
-
         self.max_output_length = max_output_length
         self.beam_size = beam_size
         self.number_of_output_sequence = number_of_output_sequence
-        super(RNNDecoderWithBeamSearch, self).__init__(**kwargs)
+        self.eos = None
+        super(RNNBeamSearchDecoder, self).__init__(**kwargs)
 
     def get_output_shape_for(self, input_shape):
         # two outputs: sequence and score
@@ -354,42 +354,85 @@ def RNNDecoderWithBeamSearch(RNNLayerBase):
 
     def build(self, input_shapes):
         check_and_throw_if_fail(self.stateful == False, "stateful")
-        # first one is of shape nb_samples
-        _, input_shape = input_shapes
+        input_shape = input_shapes[-1]
         check_and_throw_if_fail(len(input_shape) == 2, "input_shape=(nb_samples, source_context_input_dim")
         self.states = [None]
 
+    @staticmethod
+    def gather_per_sample(x, indices):
+        y_list = []
+        for xi , indice in zip(unpack(x), unpack(indices)):
+            yi = K.gather(xi, indice)
+            y_list.append(yi)
+        return K.pack(y_list)
 
     def call(self, inputs, mask=None):
+        check_and_throw_if_fail(self.beam_size <= self.mlp_classifier.output_dim , "beam_size")
         # input shape: (nb_samples, time (padded with zeros))
         x, source_context = inputs
+        if K.ndim(x) == 2:
+            x = K.squeeze(x, 1)
         # x is the initial input, i.e., bos
         current_states = self.get_initial_states(x)
         current_input = self.embedding(x)
-        current_input = K.repeat_elements(current_input, self.beam_size, 0)    #  nb_samples* beam_size* input_dim
+        current_input = K.repeat_elements(current_input, self.beam_size, 0)    #  nb_samples* beam_size, input_dim
         current_states = K.repeat_elements(current_states, self.beam_size, 0)
-        scores = K.cast (K.zeros_like(x), K.common._FLOATX)
-        scores = K.repeat_elements(scores, self.beam_size, 0)
-        output_list = []
-        prev_output_index_list = []    #
+        output_scores = K.cast (K.zeros_like(x), K.common._FLOATX)
+        output_scores = K.repeat_elements(output_scores, self.beam_size, 0)    # nb_samples*beam_size
+        output_scores_list = []    # nb_samples, beam_size
+        output_label_id_list = []
+        prev_output_index_list = []
         for _ in xrange(self.max_output_length):
-            output, current_states = self.step(current_input, current_states, source_context)
-            # output has a shape of: nb_samples*beam_size,output_dim
-            # top_k
+            output, current_states = self.step(current_input, current_states, source_context)    # nb_samples*beam_size , output_dim
+            scores = K.expand_dims(output_scores) + K.log(output)
+            scores = K.reshape(scores, shape=(-1, self.beam_size, self.mlp_classifier.output_dim))    # nb_samples, beam_size,  output_dim
+            top_k_k_scores, top_k_k_scores_indices = top_k (scores, self.beam_size)    # nb_samples, beam_size,  beam_size
+            top_k_k_scores = K.reshape(top_k_k_scores , shape=(-1, self.beam_size * self.beam_size))    # nb_samples, beam_size* beam_size
+            top_k_k_scores_indices = K.reshape(top_k_k_scores_indices , shape=(-1, self.beam_size * self.beam_size))
+            # nb_samples, k, k
+            top_k_scores, top_k_scores_indices = top_k (top_k_k_scores, self.beam_size)    #  nb_samples, beam_size
+            scores = K.reshape(top_k_scores, shape=(-1, self.mlp_classifier.output_dim))    # nb_samples*beam_size, output_dim
+            x = RNNBeamSearchDecoder.gather_per_sample(top_k_k_scores_indices, top_k_scores_indices)    # nb_samples, beam_size
+            output_scores = RNNBeamSearchDecoder.gather_per_sample(scores, K.reshape(x, shape=(-1,)))    # nb_samples*beam_size
+            output_scores_list.append (K.reshape(output_scores, shape=(-1, self.beam_size)))
+            output_label_id_list.append(x)
+            prev_output_index = top_k_scores_indices // self.beam_size    # nb_samples, beam_size
+            prev_output_index_list.append (prev_output_index)
+            current_input = self.embedding(x)
+            current_input = K.reshape(current_input, shape=(-1, self.embedding.output_dim))
+            # current states:  nb_samples*beam_size, cell_output_dim
+            current_states = K.gather (current_states, prev_output_index)
+        if self.eos:
+            eos = self.eos + K.zeros_like(x)
+            eos = K.reshape (K.repeat_elements(eos, self.number_of_output_sequence), shape=(-1, self.number_of_output_sequence))
+        return RNNBeamSearchDecoder.get_k_best_from_lattice([output_scores_list, output_label_id_list, prev_output_index], self.number_of_output_sequence, eos)
 
-        input_list = unpack(x)
-        successive_states = []
-        successive_outputs = []
-        for current_input in input_list:
-            # TODO: randomly use the real greedy output as the next input
-            output, current_states = self.step(current_input, current_states, source_context)
-            successive_outputs.append(output)
-            successive_states.append(current_states)
-        outputs = K.pack(successive_outputs)
-        outputs = K.permute_dimensions(outputs, axes=[1, 0, 2])
-        new_states = successive_states[-1]
-        if self.stateful:
-            self.updates = []
-            for i in range(len(new_states)):
-                self.updates.append((self.states[i], new_states[i]))
-        return outputs
+    @staticmethod
+    def cond_set(cond, t1, t2):
+        r = []
+        t1 = K.reshape(t1, shape=(-1,))
+        t2 = K.reshape(t1, shape=(-1,))
+        cond = K.reshape(cond, shape=(-1,))
+        for _c, _1, _2 in zip (unpack(cond), unpack(t1), unpack(t2)):
+            r.append(K.switch(_c, _1, _2))
+        return K.pack(r)
+
+    @staticmethod
+    def get_k_best_from_lattice(lattice, k, eos):
+        for l in lattice:
+            l.reverse()
+        output_scores_list, output_label_id_list, prev_output_index = lattice
+        pathes = []
+        path_scores, output_indices = top_k (output_scores_list[0], k)
+        for output_scores, output_label_id, prev_output_index in zip(output_scores_list, output_label_id_list, prev_output_index):
+            pathes.append (RNNBeamSearchDecoder.gather_per_sample(output_label_id, output_indices))
+            scores = RNNBeamSearchDecoder.gather_per_sample(output_scores, output_indices)
+            if eos:
+                cond = K.equal(pathes[-1], eos)
+                path_scores = K.reshape(RNNBeamSearchDecoder.cond_set(cond, scores, path_scores), shape=(-1, k))
+            output_indices = RNNBeamSearchDecoder.gather_per_sample(prev_output_index, output_indices)
+        if eos:
+            path_scores, output_indices = top_k(path_scores, k)
+            pathes = [RNNBeamSearchDecoder.gather_per_sample(path, output_indices) for path in pathes]
+        pathes = K.permute_dimensions(K.pack(pathes), (1, 2, 0))
+        return pathes, path_scores

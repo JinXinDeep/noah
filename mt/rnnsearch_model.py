@@ -7,12 +7,13 @@ from keras.layers.recurrent import GRU
 from keras.models import Model
 from keras.layers import Input
 from keras.layers.embeddings import Embedding
-from ..common import  BiDirectionalLayer, AttentionLayer, GRUCell, RNNLayer, MLPClassifierLayer, categorical_crossentropy_ex
+from ..common import  BiDirectionalLayer, AttentionLayer, GRUCell, RNNLayer, RNNBeamSearchDecoder, MLPClassifierLayer, categorical_crossentropy_ex
 
 
 def build_model(max_timesteps, source_vacabuary_size, source_embedding_dim, source_initia_embedding, recurrent_input_lengths,
                  target_vacabuary_size, target_embedding_dim,
-                 target_initia_embedding, recurrent_output_dim, max_output_length, output_dim, hidden_unit_numbers, hidden_unit_activation_functions):
+                 target_initia_embedding, recurrent_output_dim, max_output_length, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
+                 max_output_length, beam_size, number_of_output_sequence, eos):
     source_word = Input(shape=(max_timesteps,))
     input_embedding = Embedding(source_vacabuary_size, source_embedding_dim, weights=[source_initia_embedding])
     output = input_embedding(source_word)
@@ -35,5 +36,10 @@ def build_model(max_timesteps, source_vacabuary_size, source_embedding_dim, sour
     rnn_search = Model(input=[source_word, output_true], output=output)
     # TODO: try advanced loss function based on negative sampling
     rnn_search.compile(optimizer='rmsprop', loss=categorical_crossentropy_ex, metrics=['accuracy'])
+    bos = Input(shape=(1,))
+    decoder = RNNBeamSearchDecoder(rnn_cell, attention, output_embedding, mlp_classifier)(output_true,
+                            source_context, max_output_length, beam_size, number_of_output_sequence, eos)
+    pathes, path_scores = decoder (bos, source_context)
+    rnn_search_runtime = Model(input=[source_word, bos], output=[pathes, path_scores])
 
-    return (rnn_search,)
+    return (rnn_search, rnn_search_runtime)
