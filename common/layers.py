@@ -66,6 +66,9 @@ class MLPClassifierLayer(Layer):
         self.output_dim = output_dim
         self.hidden_unit_numbers = hidden_unit_numbers
         self.hidden_unit_activation_functions = hidden_unit_activation_functions
+        self.output_activation_function = output_activation_function
+        if hidden_unit_numbers:
+            self.uses_learning_phase = True
         super(MLPClassifierLayer, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -257,7 +260,17 @@ def RNNLayerBase(Layer):
         self.mlp_classifier = mlp_classifier
         self.output_embedding = output_embedding
         self.stateful = stateful
+        self.uses_learning_phase = mlp_classifier.uses_learning_phase or rnn_cell.uses_learning_phase or output_embedding.output_embedding or attention.uses_learning_phase
         super(RNNLayerBase, self).__init__(**kwargs)
+
+    def get_initial_states(self, x):
+        # build an all-zero tensor of shape (samples, output_dim)
+        initial_state = K.zeros_like(x)    # (samples, timesteps)
+        initial_state = K.sum(initial_state, axis=(1,))    # (samples,)
+        initial_state = K.expand_dims(initial_state)    # (samples, 1)
+        initial_state = K.tile(initial_state, [1, self.output_dim])    # (samples, output_dim)
+        initial_states = [initial_state for _ in range(len(self.states))]
+        return initial_states
 
     def get_output_shape_for(self, input_shape):
         raise NotImplementedError
@@ -270,9 +283,6 @@ def RNNLayerBase(Layer):
         return [output, h]
 
     def build(self, input_shapes):
-        raise NotImplementedError
-
-    def get_initial_states(self, x):
         raise NotImplementedError
 
     def call(self, inputs, mask=None):
@@ -295,15 +305,6 @@ def RNNLayer(RNNLayerBase):
         else:
             # initial states: all-zero tensor of shape (output_dim)
             self.states = [None]
-
-    def get_initial_states(self, x):
-        # build an all-zero tensor of shape (samples, output_dim)
-        initial_state = K.zeros_like(x)    # (samples, timesteps)
-        initial_state = K.sum(initial_state, axis=(1,))    # (samples,)
-        initial_state = K.expand_dims(initial_state)    # (samples, 1)
-        initial_state = K.tile(initial_state, [1, self.output_dim])    # (samples, output_dim)
-        initial_states = [initial_state for _ in range(len(self.states))]
-        return initial_states
 
     def call(self, inputs, mask=None):
         # input shape: (nb_samples, time (padded with zeros))
@@ -351,33 +352,31 @@ def RNNDecoderWithBeamSearch(RNNLayerBase):
         # two outputs: sequence and score
         return (input_shape[0], self.number_of_output_sequence, self.max_output_length), (input_shape[0], self.number_of_output_sequence)
 
-    def build(self, input_shape):
+    def build(self, input_shapes):
+        check_and_throw_if_fail(self.stateful == False, "stateful")
+        # first one is of shape nb_samples
+        _, input_shape = input_shapes
         check_and_throw_if_fail(len(input_shape) == 2, "input_shape=(nb_samples, source_context_input_dim")
-        if self.stateful:
-            check_and_throw_if_fail(not input_shape[0] , 'If a RNN is stateful, a complete  input_shape must be provided (including batch size).')
-            self.states = [K.zeros((input_shape[0] * self.beam_size , self.rnn_cell.output_dim))]
-        else:
-            # initial states: all-zero tensor of shape (output_dim)
-            self.states = [None]
+        self.states = [None]
 
-    def get_initial_states(self, x):
-        # build an all-zero tensor of shape (samples, output_dim)
-        initial_state = K.zeros_like(x)    # (samples)
-        initial_state = K.repeat_elements(initial_state, self.beam_size)
-        initial_state = K.expand_dims(initial_state)    # (samples, 1)
-        initial_state = K.tile(initial_state, [1, self.output_dim])    # (samples, output_dim)
-        initial_states = [initial_state for _ in range(len(self.states))]
-        return initial_states
 
     def call(self, inputs, mask=None):
         # input shape: (nb_samples, time (padded with zeros))
         x, source_context = inputs
-        if self.stateful:
-            current_states = self.states
-        else:
-            current_states = self.get_initial_states(x)
-        x = self.embedding(x)
-        x = K.permute_dimensions(x, axes=[1, 0, 2])
+        # x is the initial input, i.e., bos
+        current_states = self.get_initial_states(x)
+        current_input = self.embedding(x)
+        current_input = K.repeat_elements(current_input, self.beam_size, 0)    #  nb_samples* beam_size* input_dim
+        current_states = K.repeat_elements(current_states, self.beam_size, 0)
+        scores = K.cast (K.zeros_like(x), K.common._FLOATX)
+        scores = K.repeat_elements(scores, self.beam_size, 0)
+        output_list = []
+        prev_output_index_list = []    #
+        for _ in xrange(self.max_output_length):
+            output, current_states = self.step(current_input, current_states, source_context)
+            # output has a shape of: nb_samples*beam_size,output_dim
+            # top_k
+
         input_list = unpack(x)
         successive_states = []
         successive_outputs = []
