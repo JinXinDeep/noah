@@ -75,24 +75,17 @@ class MLPClassifierLayer(Layer):
         self.layers = []
         ndim = len(input_shape)
         for hidden_unit_number, hidden_unit_activation_function in zip(self.hidden_unit_numbers, self.hidden_unit_activation_functions):
-            dense = Dense(hidden_unit_number)
-            activation = Activation(hidden_unit_activation_function)
-            norm = BatchNormalization()
+            dense = Dense(hidden_unit_number, activation=hidden_unit_activation_function)
             if ndim == 3:
                 dense = TimeDistributed(dense)
-                activation = TimeDistributed(activation)
+            norm = BatchNormalization()
             self.layers.append(dense)
-            self.layers.append(activation)
             self.layers.append(norm)
 
-        dense = Dense(self.output_dim)
-        activation = Activation(self.output_activation_function)
+        dense = Dense(self.output_dim, activation=self.output_activation_function)
         if ndim == 3:
             dense = TimeDistributed(dense)
-            activation = TimeDistributed(activation)
-
         self.layers.append(dense)
-        self.layers.append(activation)
 
     def call(self, x, mask=None):
         output = x
