@@ -73,7 +73,7 @@ def attach_ctc_beam_decodeder_to_model(model):
     output = ctc_beam_search_decoder(output, sequence_length, beam_width=100, top_paths=1, merge_repeated=True)
     return Model(input=model.input, output=output)
 
-def build_model(max_timesteps, input_dim, conv_output_dims, conv_filter_lengths, recurrent_output_dims, dense_output_dims, softmax_output_dim):
+def build_model(max_timesteps, input_dim, conv_output_dims, conv_filter_lengths, recurrent_output_dims, lookahead_conv_output_dims, lookahead_conv_filter_lengths, dense_output_dims, softmax_output_dim):
     # input shape: batch_size, timesteps, input_dim
     spectrogram = Input(shape=(max_timesteps, input_dim))
     output = spectrogram
@@ -92,6 +92,14 @@ def build_model(max_timesteps, input_dim, conv_output_dims, conv_filter_lengths,
         output = BiDirectionalLayer()(h1, h2)
         batch_norm = BatchNormalization()
         output = batch_norm(output)
+
+    # lookahead conv layers
+    for conv_output_dim, conv_filter_length  in zip(lookahead_conv_output_dims, lookahead_conv_filter_lengths):
+        conv = Convolution1D(conv_output_dim, conv_filter_length, border_mode='same')
+        output = conv (output)
+        batch_norm = BatchNormalization()
+        output = batch_norm(output)
+
     # full connection layers
     for dense_output_dim in dense_output_dims:
         dense = Dense(dense_output_dim)
