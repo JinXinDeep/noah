@@ -95,7 +95,7 @@ def build_model(max_timesteps, input_dim, conv_output_dims, conv_filter_lengths,
 
     # lookahead conv layers
     for conv_output_dim, conv_filter_length  in zip(lookahead_conv_output_dims, lookahead_conv_filter_lengths):
-        conv = Convolution1D(conv_output_dim, conv_filter_length, border_mode='same')
+        conv = Convolution1D(conv_output_dim, conv_filter_length, border_mode='valid')
         output = conv (output)
         batch_norm = BatchNormalization()
         output = batch_norm(output)
