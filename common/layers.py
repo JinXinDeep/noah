@@ -6,24 +6,31 @@ Created on Jul 16, 2016
 
 from keras import backend as K
 from keras.engine import Layer
-from .backend import unpack, inner_product, shape, top_k
+from .backend import reshape, reverse, inner_product, unpack, top_k
 from .utils import check_and_throw_if_fail
-from keras.layers import Dense, Activation, BatchNormalization
+from keras.layers import Dense, BatchNormalization
 from keras.layers.wrappers import TimeDistributed
 
 from keras import activations, initializations, regularizers
 import numpy as np
 
+'''
+Helper function that performs reshape on a tensor
+'''
 class ReshapeLayer(Layer):
     '''
     Refer to: https://www.cs.cmu.edu/~diyiy/docs/naacl16.pdf, formula 8,9 and 10
     '''
-    def __init__(self, target_shape, **kwargs):
-        self.target_shape = target_shape
+    def __init__(self, target_shape, target_tensor_shape=None, ** kwargs):
+        self.target_shape = tuple(target_shape)
+        self.target_tensor_shape = target_tensor_shape
         super(ReshapeLayer, self).__init__(**kwargs)
 
     def call(self, x, mask=None):
-        return K.reshape(x, self.target_shape)
+        if self.target_tensor_shape:
+            return reshape(x, self.target_tensor_shape, ndim=len(self.target_shape))    # required by theano
+        else:
+            return reshape(x, self.target_shape)
 
     def get_output_shape_for(self, input_shape):
         return self.target_shape
@@ -38,9 +45,7 @@ class BiDirectionalLayer(Layer):
         ndim = K.ndim(right_to_left)
         axes = [1, 0] + list(range(2, ndim))
         right_to_left = K.permute_dimensions(right_to_left, axes)
-        right_to_left_time_step_list = unpack(right_to_left)
-        right_to_left_time_step_list.reverse()
-        right_to_left = K.pack(right_to_left_time_step_list)
+        right_to_left = reverse(right_to_left)
         right_to_left = K.permute_dimensions(right_to_left, axes)
         return K.concatenate([left_to_right, right_to_left], axis=-1)
     def get_output_shape_for(self, input_shapes):
@@ -78,7 +83,7 @@ class MLPClassifierLayer(Layer):
             dense = Dense(hidden_unit_number, activation=hidden_unit_activation_function)
             if ndim == 3:
                 dense = TimeDistributed(dense)
-            norm = BatchNormalization()
+            norm = BatchNormalization(mode=2)
             self.layers.append(dense)
             self.layers.append(norm)
 
@@ -101,41 +106,39 @@ class AttentionLayer(Layer):
     Refer to: http://nlp.ict.ac.cn/Admin/kindeditor/attached/file/20141011/20141011133445_31922.pdf
     TODO: should be straightforward to enhance the attention layer to support advanced attention model, such as coverage
     '''
+    def __init__(self, output_dim, **kwargs):
+        self.output_dim = output_dim
+        super(AttentionLayer, self).__init__(**kwargs)
+
     def build(self, input_shapes):
         '''
-        input_shape[0]: batch_size , input_dim
-        input_shape[1]: batch_size , time_steps, h_input_dim
+        s' input_shape[0]: batch_size , input_dim
+        h' input_shape[1]: batch_size , time_steps, h_input_dim
         '''
-        check_and_throw_if_fail(len(input_shapes) == 2, "input_shapes")
-        input_shape = input_shapes[0]
-        check_and_throw_if_fail(len(input_shape) == 2, "input_shape")
-        input_dim = input_shape[-1]
-        initial_W_a = np.random.random((input_dim, self.output_dim))
-        initial_U_a = np.random.random((shape(self.h)[-1], self.output_dim))
+        initial_W_a = np.random.random((input_shapes[0][-1], self.output_dim))
+        initial_U_a = np.random.random((input_shapes[-1][-1], self.output_dim))
         initial_v_a = np.random.random((self.output_dim,))
         self.W_a = K.variable(initial_W_a)
         self.U_a = K.variable(initial_U_a)
         self.v_a = K.variable(initial_v_a)
         self.trainable_weights = [self.W_a, self.U_a, self.v_a]
-        self.u_a_h = K.dot(self.h, self.U_a)
+        self.U_a_h = K.dot(self.h, self.U_a)    # batch_size, time_steps, output_dim
 
     def call(self, inputs, mask=None):
         '''
-        s,h: batch_size * input_dim
+        s: batch_size , input_dim
+        h: batch_size,time_steps, h_input_dim
         '''
         s, h = inputs
-        check_and_throw_if_fail(K.ndim(s) == 2, "s")
-        w_a_s = K.dot(s, self.W_a)
-        timesteps = shape(self.u_a_h)[1]
-        w_a_s = K.repeat(w_a_s, timesteps)
-        e = K.tanh (w_a_s + self.u_a_h)
+        W_a_s = K.expand_dims(K.dot(s, self.W_a), 1)    # batch_size, 1, output_dim
+        e = K.tanh (W_a_s + self.U_a_h)    # batch_size, time_steps, output_dim
         e = inner_product(e, self.v_a)    # shape: batch_size, time_steps
         e = K.exp (e)
-        e_sum = K.sum(e, -1, keepdims=True)
-        a = e / e_sum
-        a = K.expand_dims(a)    # to shape: batch_size, time_steps, 1
-        c = a * h
-        c = K.sum(c, axis=1)
+        e_sum = K.sum(e, -1, keepdims=True)    # batch_size, 1
+        a = e / e_sum    # batch_size, time_steps
+        a = K.expand_dims(a)    # batch_size, time_steps, 1
+        c = a * h    # batch_size, time_steps, h_input_dim
+        c = K.sum(c, axis=1)    # batch_size, h_input_dim
         return c
 
     def get_output_shape_for(self, input_shapes):
@@ -210,7 +213,8 @@ class GRUCell(Layer):
 
     def call(self, inputs, mask=None):
         check_and_throw_if_fail(len(inputs) == 3 , "inputs")
-        h_tm1 = inputs[-1]
+        # the last one is previous state
+        h_prev = inputs[-1]
         if self.consume_less == 'gpu':
             x = self.b
             for y, W in zip(inputs[:-1], self.W):
@@ -220,12 +224,12 @@ class GRUCell(Layer):
             x_r = x[:, self.output_dim: 2 * self.output_dim]
             x_h = x[:, 2 * self.output_dim:]
 
-            matrix_inner = K.dot(h_tm1 , self.U[:, :2 * self.output_dim])
+            matrix_inner = K.dot(h_prev , self.U[:, :2 * self.output_dim])
             inner_z = matrix_inner[:, :self.output_dim]
             inner_r = matrix_inner[:, self.output_dim: 2 * self.output_dim]
             z = self.inner_activation(x_z + inner_z)
             r = self.inner_activation(x_r + inner_r)
-            inner_h = K.dot(r * h_tm1 , self.U[:, 2 * self.output_dim:])
+            inner_h = K.dot(r * h_prev , self.U[:, 2 * self.output_dim:])
             hh = self.activation(x_h + inner_h)
         else:
             x_z = self.b_z
@@ -235,11 +239,11 @@ class GRUCell(Layer):
                 x_z += K.dot(y, W_z)
                 x_r += K.dot(y, W_r)
                 x_h += K.dot(y, W_h)
-            z = self.inner_activation(x_z + K.dot(h_tm1 , self.U_z))
-            r = self.inner_activation(x_r + K.dot(h_tm1, self.U_r))
-            hh = self.activation(x_h + K.dot(r * h_tm1, self.U_h))
-        h = z * h_tm1 + (1 - z) * hh
-        return h
+            z = self.inner_activation(x_z + K.dot(h_prev , self.U_z))
+            r = self.inner_activation(x_r + K.dot(h_prev, self.U_r))
+            inner_h = K.dot(r * h_prev , self.U_h)
+            hh = self.activation(x_h + inner_h)
+        return  (1 - z) * h_prev + z * hh    # consistent with the formula in the paper
 
     def get_output_shape_for(self, input_shapes):
         return (input_shapes[0][0], self.output_dim)
@@ -269,17 +273,25 @@ def RNNLayerBase(Layer):
         raise NotImplementedError
 
     def step(self, x, states, source_context):
-        h_tm1 = states[0]    # previous memory
-        c = self.attention(h_tm1, source_context)
-        h = self.rnn_cell([x, c, h_tm1])
+        h_prev = states[0]    # previous memory
+        c = self.attention(h_prev, source_context)
+        h = self.rnn_cell([x, c, h_prev])
         output = self.mlp_classifier(h)
-        return [output, h]
+        return output, [h]
 
     def build(self, input_shapes):
         raise NotImplementedError
 
     def call(self, inputs, mask=None):
         raise NotImplementedError
+
+    @staticmethod
+    def get_time_steps_without_padding(x):
+        '''
+        x: batch_size, time_steps
+        '''
+        s = K.sum(x, axis=0)    # time_steps
+        return K.sum (K.cast(K.not_equal(s, 0), 'int32'))
 
 def RNNLayer(RNNLayerBase):
     '''
@@ -291,7 +303,7 @@ def RNNLayer(RNNLayerBase):
 
     def build(self, input_shapes):
         input_shape, _ = input_shapes
-        check_and_throw_if_fail(len(input_shape) == 2, "input_shape=(nb_samples, time")
+        check_and_throw_if_fail(len(input_shape) == 2, "input_shape=(nb_samples, time_steps)")
         if self.stateful:
             check_and_throw_if_fail(not input_shape[0] , 'If a RNN is stateful, a complete  input_shape must be provided (including batch size).')
             self.states = [K.zeros((input_shape[0], self.rnn_cell.output_dim))]
@@ -302,13 +314,14 @@ def RNNLayer(RNNLayerBase):
     def call(self, inputs, mask=None):
         # input shape: (nb_samples, time (padded with zeros))
         x, source_context = inputs
+        time_steps = RNNLayerBase.get_time_steps_without_padding(x)
         if self.stateful:
             current_states = self.states
         else:
             current_states = self.get_initial_states(x)
         x = self.embedding(x)
         x = K.permute_dimensions(x, axes=[1, 0, 2])
-        input_list = unpack(x)
+        input_list = unpack(x, time_steps)
         successive_states = []
         successive_outputs = []
         for current_input in input_list:
