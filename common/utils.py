@@ -10,12 +10,12 @@ Created on Jul 16, 2016
 def check_and_throw_if_fail(condition, msg):
     '''Throws an exception if the condition does not hold.
 
-    Parameters
+    # Parameters
     ----------
     condition : bool
     msg: str
 
-    Raises
+    # Raises
     ------
     Exception
         If condition is False.

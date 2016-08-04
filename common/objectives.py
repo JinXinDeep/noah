@@ -7,7 +7,17 @@ import keras.backend as K
 
 def categorical_crossentropy_ex(y_true, y_pred):
     '''
-    Expects a binary class matrix instead of a vector of scalar classes.
+    cross entropy (i.e., - log-likelihood) of the ground truth based on current prediction.
+
+    # Parameters
+    ----------
+    y_true : binary tensor
+    y_pred: a tensor of float, must have the same shape of y_true
+        each element of y_pred is a float between [0,1], and the sum of y_pred along the last dimension is a ONE tensor
+
+    # Returns
+    ------
+    - log-likelihood of y_true under y_pred
     '''
     return K.sum(K.categorical_crossentropy(y_pred, y_true))
 
