@@ -11,7 +11,7 @@ import numpy as np
 class BackendTest(unittest.TestCase):
 
 
-    def test_shape(self):
+    def test_get_shape(self):
         # Input is a keras tensor
         x = Input((3,))
         self.assertEqual(get_shape(x), (None, 3), 'get_shape')
