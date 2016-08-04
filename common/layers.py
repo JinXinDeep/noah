@@ -6,7 +6,7 @@ Created on Jul 16, 2016
 
 from keras import backend as K
 from keras.engine import Layer
-from .backend import reshape, reverse, inner_product, unpack, top_k
+from .backend import reshape, reverse, inner_product, unpack, top_k, trim_right_padding
 from .utils import check_and_throw_if_fail
 from keras.layers import Dense, BatchNormalization
 from keras.layers.wrappers import TimeDistributed
@@ -285,14 +285,6 @@ def RNNLayerBase(Layer):
     def call(self, inputs, mask=None):
         raise NotImplementedError
 
-    @staticmethod
-    def get_time_steps_without_padding(x):
-        '''
-        x: batch_size, time_steps
-        '''
-        s = K.sum(x, axis=0)    # time_steps
-        return K.sum (K.cast(K.not_equal(s, 0), 'int32'))
-
 def RNNLayer(RNNLayerBase):
     '''
     RNN based decoder for training, using the ground truth output
@@ -314,14 +306,14 @@ def RNNLayer(RNNLayerBase):
     def call(self, inputs, mask=None):
         # input shape: (nb_samples, time (padded with zeros))
         x, source_context = inputs
-        time_steps = RNNLayerBase.get_time_steps_without_padding(x)
+        x = trim_right_padding(x)    # to make computation more efficient
         if self.stateful:
             current_states = self.states
         else:
             current_states = self.get_initial_states(x)
         x = self.embedding(x)
         x = K.permute_dimensions(x, axes=[1, 0, 2])
-        input_list = unpack(x, time_steps)
+        input_list = unpack(x)
         successive_states = []
         successive_outputs = []
         for current_input in input_list:

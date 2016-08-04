@@ -4,13 +4,32 @@ Created on Jul 16, 2016
 @author: lxh5147
 '''
 from keras import backend as K
-from .utils import check_and_throw_if_fail
 
 def shape(x):
     if hasattr(x, '_keras_shape'):
         return x._keras_shape
     else:
         raise Exception('You tried to shape on "' + x.name + '". This tensor has no information  about its expected input shape,')
+
+def get_length_without_padding(x):
+    '''
+    x: batch_size, time_steps, input_dim
+    '''
+    s = K.sum(x, axis=[0,2])    # time_steps
+    return K.sum (K.cast(K.not_equal(s, 0), 'int32'))
+
+def trim_right_padding(x):
+    '''
+    x: batch_size, time_steps, input_dim
+    '''
+    if K.ndim(x) == 2:
+        y = K.expand_dims(x) 
+        length_without_padding = get_length_without_padding(y)
+        return x[:,:length_without_padding]
+    else:
+        y = x
+        length_without_padding = get_length_without_padding(y)
+        return x[:,:length_without_padding,:]        
 
 if K._BACKEND == 'theano':
     from theano import tensor as T

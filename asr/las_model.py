@@ -9,7 +9,7 @@ from keras.models import Model
 from keras.layers import Input
 from keras.layers.embeddings import Embedding
 from keras.layers.core import Flatten, Reshape
-from ..common import check_and_throw_if_fail, BiDirectionalLayer, AttentionLayer, RNNBeamSearchDecoder, GRUCell, RNNLayer, MLPClassifierLayer, categorical_crossentropy_ex
+from ..common import check_and_throw_if_fail, trim_right_padding, BiDirectionalLayer, AttentionLayer, RNNBeamSearchDecoder, GRUCell, RNNLayer, MLPClassifierLayer, categorical_crossentropy_ex
 
 
 def build_model(max_timesteps, input_dim, recurrent_input_lengths,
@@ -17,7 +17,7 @@ def build_model(max_timesteps, input_dim, recurrent_input_lengths,
                  target_initia_embedding, recurrent_output_dim, max_output_length, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
                  max_output_length, beam_size, number_of_output_sequence):
     spectrogram = Input(shape=(max_timesteps, input_dim))
-    output = spectrogram
+    output = trim_right_padding (spectrogram)
     # listen: recurrent Layers
     for recurrent_input_length, recurrent_output_dim in zip(recurrent_input_length, recurrent_output_dim):
         if recurrent_input_length > 1 :

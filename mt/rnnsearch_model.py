@@ -7,7 +7,7 @@ from keras.layers.recurrent import GRU
 from keras.models import Model
 from keras.layers import Input
 from keras.layers.embeddings import Embedding
-from ..common import  BiDirectionalLayer, AttentionLayer, GRUCell, RNNLayer, RNNBeamSearchDecoder, MLPClassifierLayer, categorical_crossentropy_ex
+from ..common import trim_right_padding, BiDirectionalLayer, AttentionLayer, GRUCell, RNNLayer, RNNBeamSearchDecoder, MLPClassifierLayer, categorical_crossentropy_ex
 
 
 def build_model(max_timesteps, source_vacabuary_size, source_embedding_dim, source_initia_embedding, recurrent_input_lengths,
@@ -15,6 +15,7 @@ def build_model(max_timesteps, source_vacabuary_size, source_embedding_dim, sour
                  target_initia_embedding, recurrent_output_dim, max_output_length, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
                  max_output_length, beam_size, number_of_output_sequence, eos):
     source_word = Input(shape=(max_timesteps,))
+    source_word = trim_right_padding(source_word)
     input_embedding = Embedding(source_vacabuary_size, source_embedding_dim, weights=[source_initia_embedding])
     output = input_embedding(source_word)
     # listen: recurrent Layers
