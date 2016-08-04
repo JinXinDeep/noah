@@ -14,7 +14,7 @@ def build_model(max_timesteps, source_vacabuary_size, source_embedding_dim, sour
                  target_vacabuary_size, target_embedding_dim,
                  target_initia_embedding, recurrent_output_dim, max_output_length, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
                  max_output_length, beam_size, number_of_output_sequence, eos):
-    source_word = Input(shape=(max_timesteps,))
+    source_word = Input(get_shape=(max_timesteps,))
     source_word = trim_right_padding(source_word)
     input_embedding = Embedding(source_vacabuary_size, source_embedding_dim, weights=[source_initia_embedding])
     output = input_embedding(source_word)
@@ -32,12 +32,12 @@ def build_model(max_timesteps, source_vacabuary_size, source_embedding_dim, sour
     rnn_cell = GRUCell(recurrent_output_dim)
     output_embedding = Embedding(target_vacabuary_size, target_embedding_dim, weights=[target_initia_embedding])
     mlp_classifier = MLPClassifierLayer(output_dim, hidden_unit_numbers, hidden_unit_activation_functions)
-    output_true = Input(shape=(max_output_length,), dtype='int32')
+    output_true = Input(get_shape=(max_output_length,), dtype='int32')
     output = RNNLayer(rnn_cell, attention, output_embedding, mlp_classifier)(output_true, source_context)
     rnn_search = Model(input=[source_word, output_true], output=output)
     # TODO: try advanced loss function based on negative sampling
     rnn_search.compile(optimizer='rmsprop', loss=categorical_crossentropy_ex, metrics=['accuracy'])
-    bos = Input(shape=(1,))
+    bos = Input(get_shape=(1,))
     decoder = RNNBeamSearchDecoder(rnn_cell, attention, output_embedding, mlp_classifier)(output_true,
                             source_context, max_output_length, beam_size, number_of_output_sequence, eos)
     pathes, path_scores = decoder (bos, source_context)

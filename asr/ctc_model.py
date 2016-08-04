@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 def length(x):
     '''
-    x: 3D tensor of shape batch_size, timestpes, input_dim
+    x: 3D tensor of get_shape batch_size, timestpes, input_dim
     returns 1D integer tensor of (batch_size,) that stores the real timesteps for each sample in the batch
     '''
     # Reference: https://danijar.com/variable-sequence-lengths-in-tensorflow/
@@ -74,8 +74,8 @@ def attach_ctc_beam_decodeder_to_model(model):
     return Model(input=model.input, output=output)
 
 def build_model(max_timesteps, input_dim, conv_output_dims, conv_filter_lengths, recurrent_output_dims, lookahead_conv_output_dims, lookahead_conv_filter_lengths, dense_output_dims, softmax_output_dim):
-    # input shape: batch_size, timesteps, input_dim
-    spectrogram = Input(shape=(max_timesteps, input_dim))
+    # input get_shape: batch_size, timesteps, input_dim
+    spectrogram = Input(get_shape=(max_timesteps, input_dim))
     output = spectrogram
     # id conv layers
     for conv_output_dim, conv_filter_length  in zip(conv_output_dims, conv_filter_lengths):

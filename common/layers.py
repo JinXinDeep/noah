@@ -64,7 +64,7 @@ class MLPClassifierLayer(Layer):
         hidden_unit_numbers: number of hidden units of each hidden layer
         hidden_unit_activation_functions: activation function of hidden layers
         output_dim: output dimension
-        returns a tensor of shape: batch_size*time_steps*output_dim
+        returns a tensor of get_shape: batch_size*time_steps*output_dim
         '''
         check_and_throw_if_fail(output_dim > 0 , "output_dim")
         check_and_throw_if_fail(len(hidden_unit_numbers) == len(hidden_unit_activation_functions) , "hidden_unit_numbers")
@@ -132,7 +132,7 @@ class AttentionLayer(Layer):
         s, h = inputs
         W_a_s = K.expand_dims(K.dot(s, self.W_a), 1)    # batch_size, 1, output_dim
         e = K.tanh (W_a_s + self.U_a_h)    # batch_size, time_steps, output_dim
-        e = inner_product(e, self.v_a)    # shape: batch_size, time_steps
+        e = inner_product(e, self.v_a)    # get_shape: batch_size, time_steps
         e = K.exp (e)
         e_sum = K.sum(e, -1, keepdims=True)    # batch_size, 1
         a = e / e_sum    # batch_size, time_steps
@@ -261,7 +261,7 @@ def RNNLayerBase(Layer):
         super(RNNLayerBase, self).__init__(**kwargs)
 
     def get_initial_states(self, x):
-        # build an all-zero tensor of shape (samples, output_dim)
+        # build an all-zero tensor of get_shape (samples, output_dim)
         initial_state = K.zeros_like(x)    # (samples, timesteps)
         initial_state = K.sum(initial_state, axis=(1,))    # (samples,)
         initial_state = K.expand_dims(initial_state)    # (samples, 1)
@@ -300,11 +300,11 @@ def RNNLayer(RNNLayerBase):
             check_and_throw_if_fail(not input_shape[0] , 'If a RNN is stateful, a complete  input_shape must be provided (including batch size).')
             self.states = [K.zeros((input_shape[0], self.rnn_cell.output_dim))]
         else:
-            # initial states: all-zero tensor of shape (output_dim)
+            # initial states: all-zero tensor of get_shape (output_dim)
             self.states = [None]
 
     def call(self, inputs, mask=None):
-        # input shape: (nb_samples, time (padded with zeros))
+        # input get_shape: (nb_samples, time (padded with zeros))
         x, source_context = inputs
         x = trim_right_padding(x)    # to make computation more efficient
         if self.stateful:
@@ -366,7 +366,7 @@ def RNNBeamSearchDecoder(RNNLayerBase):
 
     def call(self, inputs, mask=None):
         check_and_throw_if_fail(self.beam_size <= self.mlp_classifier.output_dim , "beam_size")
-        # input shape: (nb_samples, time (padded with zeros))
+        # input get_shape: (nb_samples, time (padded with zeros))
         x, source_context = inputs
         if K.ndim(x) == 2:
             x = K.squeeze(x, 1)
@@ -384,33 +384,33 @@ def RNNBeamSearchDecoder(RNNLayerBase):
             output, current_states = self.step(current_input, [current_state], source_context)    # nb_samples*beam_size , output_dim
             current_state = current_states[0]
             score = K.expand_dims(output_score) + K.log(output)    # nb_samples*beam_size, output_dim
-            score = K.reshape(score, shape=(-1, self.beam_size, self.mlp_classifier.output_dim))    # nb_samples, beam_size,  output_dim
+            score = K.reshape(score, get_shape=(-1, self.beam_size, self.mlp_classifier.output_dim))    # nb_samples, beam_size,  output_dim
             top_k_k_score, top_k_k_score_indice = top_k (score, self.beam_size)    # nb_samples, beam_size,  beam_size
-            top_k_k_score = K.reshape(top_k_k_score , shape=(-1, self.beam_size * self.beam_size))    # nb_samples, beam_size* beam_size
-            top_k_k_score_indice = K.reshape(top_k_k_score_indice , shape=(-1, self.beam_size * self.beam_size))
+            top_k_k_score = K.reshape(top_k_k_score , get_shape=(-1, self.beam_size * self.beam_size))    # nb_samples, beam_size* beam_size
+            top_k_k_score_indice = K.reshape(top_k_k_score_indice , get_shape=(-1, self.beam_size * self.beam_size))
             # nb_samples, k, k
             top_k_score, top_k_scores_indice = top_k (top_k_k_score, self.beam_size)    #  nb_samples, beam_size
             x = RNNBeamSearchDecoder.gather_per_sample(top_k_k_score_indice, top_k_scores_indice)    # nb_samples, beam_size
-            output_score = K.reshape(top_k_score, shape=(-1,))    # nb_samples*beam_size
+            output_score = K.reshape(top_k_score, get_shape=(-1,))    # nb_samples*beam_size
             output_score_list.append (top_k_score)
             output_label_id_list.append(x)
             prev_output_index = top_k_scores_indice // self.beam_size    # nb_samples, beam_size
             prev_output_index_list.append (prev_output_index)
             current_input = self.embedding(x)    # nb_samples, beam_size, embidding.output_dim
-            current_input = K.reshape(current_input, shape=(-1, self.embedding.output_dim))
+            current_input = K.reshape(current_input, get_shape=(-1, self.embedding.output_dim))
             # current state:  nb_samples*beam_size, output_dim
             current_state = K.gather (current_state, K.reshape(prev_output_index, (-1,)))
         if self.eos:
             eos = self.eos + K.zeros_like(x)    # b_samples
-            eos = K.reshape (K.repeat_elements(eos, self.number_of_output_sequence), shape=(-1, self.number_of_output_sequence))
+            eos = K.reshape (K.repeat_elements(eos, self.number_of_output_sequence), get_shape=(-1, self.number_of_output_sequence))
         return RNNBeamSearchDecoder.get_k_best_from_lattice([output_score_list, output_label_id_list, prev_output_index], self.number_of_output_sequence, eos)
 
     @staticmethod
     def cond_set(cond, t1, t2):
         r = []
-        t1 = K.reshape(t1, shape=(-1,))
-        t2 = K.reshape(t1, shape=(-1,))
-        cond = K.reshape(cond, shape=(-1,))
+        t1 = K.reshape(t1, get_shape=(-1,))
+        t2 = K.reshape(t1, get_shape=(-1,))
+        cond = K.reshape(cond, get_shape=(-1,))
         for _c, _1, _2 in zip (unpack(cond), unpack(t1), unpack(t2)):
             r.append(K.switch(_c, _1, _2))
         return K.pack(r)
@@ -428,7 +428,7 @@ def RNNBeamSearchDecoder(RNNLayerBase):
             score = RNNBeamSearchDecoder.gather_per_sample(output_score, output_indice)
             if eos:
                 cond = K.equal(path_list[-1], eos)
-                path_score = K.reshape(RNNBeamSearchDecoder.cond_set(cond, score, path_score), shape=(-1, k))
+                path_score = K.reshape(RNNBeamSearchDecoder.cond_set(cond, score, path_score), get_shape=(-1, k))
             output_indice = RNNBeamSearchDecoder.gather_per_sample(prev_output_index, output_indice)
         if eos:
             path_score, output_indice = top_k(path_score, k)    # sort the top k path by default, nb_samples, k

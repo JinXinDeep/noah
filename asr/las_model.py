@@ -16,7 +16,7 @@ def build_model(max_timesteps, input_dim, recurrent_input_lengths,
                  target_vacabuary_size, target_embedding_dim,
                  target_initia_embedding, recurrent_output_dim, max_output_length, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
                  max_output_length, beam_size, number_of_output_sequence):
-    spectrogram = Input(shape=(max_timesteps, input_dim))
+    spectrogram = Input(get_shape=(max_timesteps, input_dim))
     output = trim_right_padding (spectrogram)
     # listen: recurrent Layers
     for recurrent_input_length, recurrent_output_dim in zip(recurrent_input_length, recurrent_output_dim):
@@ -37,12 +37,12 @@ def build_model(max_timesteps, input_dim, recurrent_input_lengths,
     rnn_cell = GRUCell(recurrent_output_dim)
     output_embedding = Embedding(target_vacabuary_size, target_embedding_dim, weights=[target_initia_embedding])
     mlp_classifier = MLPClassifierLayer(output_dim, hidden_unit_numbers, hidden_unit_activation_functions)
-    output_true = Input(shape=(max_output_length,), dtype='int32')
+    output_true = Input(get_shape=(max_output_length,), dtype='int32')
     output = RNNLayer(rnn_cell, attention, output_embedding, mlp_classifier)(output_true, source_context)
     las = Model(input=[spectrogram, output_true], output=output)
     # TODO: try advanced loss function based on negative sampling
     las.compile(optimizer='rmsprop', loss=categorical_crossentropy_ex, metrics=['accuracy'])
-    bos = Input(shape=(1,))
+    bos = Input(get_shape=(1,))
     decoder = RNNBeamSearchDecoder(rnn_cell, attention, output_embedding, mlp_classifier)(output_true, source_context, max_output_length, beam_size, number_of_output_sequence)
     pathes, path_scores = decoder (bos, source_context)
     las_runtime = Model(input=[spectrogram, bos], output=[pathes, path_scores])
