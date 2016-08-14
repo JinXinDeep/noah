@@ -4,7 +4,7 @@ Created on Aug 4, 2016
 @author: lxh5147
 '''
 import unittest
-from backend import get_shape
+from backend import get_shape, get_length_without_padding, unpack, reverse
 from keras.layers import Input
 import keras.backend as K
 import numpy as np
@@ -27,6 +27,34 @@ class BackendTest(unittest.TestCase):
         except Exception as e:
             self.assertTrue(e.message.startswith('You tried to call get_shape on'), 'get_shape')
             self.assertTrue(True, 'get_shape for non keras tensor')
+
+    def test_get_length_without_padding(self):
+        x = Input((2, 3))
+        length_without_padding = get_length_without_padding(x)
+        f = K.function(inputs = [x], outputs = [length_without_padding])
+        x_val = [[[1, 2, 3], [0, 0, 0]], [[1, 2, 3], [1, 0, 0]]]
+        len_val = f([x_val])[0]
+        self.assertTrue(np.array_equal(len_val, [1, 2]), "len_val")
+
+    def test_unpack(self):
+        x = Input((3,))
+        # num must match the shape of data input; otherwise will get exception
+        x_list = unpack(x, 2)
+        f = K.function(inputs = [x], outputs = x_list)
+        x_val = [[3, 2, 2], [4, 2, 2]]
+        x_list_val = f([x_val])
+        self.assertEqual(len(x_list_val), 2, "x_list_val")
+        self.assertTrue(np.array_equal(x_list_val[0], [3, 2, 2]), "x_list_val")
+        self.assertTrue(np.array_equal(x_list_val[1], [4, 2, 2]), "x_list_val")
+
+    def test_reverse(self):
+        x = Input((3,))
+        reversed_x = reverse(x, 2)
+        f = K.function(inputs = [x], outputs = [reversed_x])
+        x_val = [[3, 2, 2], [4, 2, 2]]
+        reversed_x_val = f([x_val])[0]
+        self.assertTrue(np.array_equal(reversed_x_val, [ [4, 2, 2], [3, 2, 2]]), "reversed_x_val")
+
 
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
