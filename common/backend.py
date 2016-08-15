@@ -40,6 +40,25 @@ def get_length_without_padding(x):
     s = K.sum(x, axis = -1)  # ..., time_steps
     return K.sum (K.cast(K.not_equal(s, 0), 'int32'), axis = -1)  # ...
 
+def inner_product(x, y):
+    '''Gets the inner product between a tensor and a vector. The last dimension of that tensor must have the same shape as the vector.
+
+    # Parameters
+    ----------
+    x : a tensor whose dimensions >=2, of a shape .., vector_dim
+    y : a vector (one dimension vector of shape vector_dim
+
+    # Returns
+    ------
+    a tensor with ndim-1 dimensions, where ndim is the number of dimensions of the input tensor
+    '''
+    x = K.expand_dims(x, -2)  # ..., 1, vector_dim
+    y = K.expand_dims(y)  # vector_dim,1
+    output = K.dot(x, y)  # ..., 1*1
+    output = K.squeeze(output, -1)
+    output = K.squeeze(output, -1)
+    return output
+
 if K._BACKEND == 'theano':
     from theano import tensor as T
     def unpack(x):
@@ -247,15 +266,3 @@ elif K._BACKEND == 'tensorflow':
             A `Tensor`. Has the same type as `tensor`.
         """
         return tf.reshape(x, shape)
-
-def inner_product(x, y):
-    '''
-    x: a tensor, with a get_shape ..,inner_product_dim
-    y: 1 dimension tensor with get_shape inner_product_dim
-    '''
-    x = K.expand_dims(x, -2)  # 1*inner_product_dim
-    y = K.expand_dims(y)  # inner_product_dim*1
-    output = K.dot(x, y)  # 1*1
-    output = K.squeeze(output, -1)
-    output = K.squeeze(output, -1)
-    return output

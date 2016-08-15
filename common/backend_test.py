@@ -4,7 +4,7 @@ Created on Aug 4, 2016
 @author: lxh5147
 '''
 import unittest
-from backend import get_shape, get_length_without_padding, unpack, reverse
+from backend import get_shape, get_length_without_padding, unpack, reverse, reshape, inner_product
 from keras.layers import Input
 import keras.backend as K
 import numpy as np
@@ -55,6 +55,28 @@ class BackendTest(unittest.TestCase):
         reversed_x_val = f([x_val])[0]
         self.assertTrue(np.array_equal(reversed_x_val, [ [4, 2, 2], [3, 2, 2]]), "reversed_x_val")
 
+    def test_reshape(self):
+        x = Input((4,))
+        y = reshape(x, shape = (-1, 2, 2))  # - means all the remaining
+        f = K.function(inputs = [x], outputs = [y])
+        x_val = [[3, 2, 2, 4], [4, 2, 2, 4]]
+        y_val = f([x_val])[0]
+        self.assertTrue(np.array_equal(y_val, [[ [3, 2], [2, 4]], [[4, 2], [2, 4]]]), "y_val")
+
+    def test_inner_product(self):
+        x = K.variable([2, 3, 4])
+        y = K.variable([3, 4, 5])
+        inner_prod = inner_product(x, y)
+        f = K.function(inputs = [x, y], outputs = [inner_prod])
+        inner_prod_val = f ([K.get_value(x), K.get_value(y)])[0]
+        self.assertEqual(6 + 12 + 20, inner_prod_val, "inner_prod_val")
+        # more complicated inner product
+        x = Input((3,))
+        y = K.variable([1, 2, 3])
+        inner_prod = inner_product(x, y)
+        f = K.function(inputs = [x, y], outputs = [inner_prod])
+        inner_prod_val = f ([[[1, 2, 1], [2, 1, 2]], K.get_value(y)])[0]
+        self.assertTrue(np.array_equal(inner_prod_val, [1 + 4 + 3, 2 + 2 + 6]), "inner_prod_val")
 
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
