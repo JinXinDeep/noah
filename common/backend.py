@@ -86,7 +86,9 @@ if K._BACKEND == 'theano':
         the reversed tensor with the same shape of the input
         '''
         return x[::-1]
-    def top_k(x, k):
+    def top_k(k = 1, sorted_by_value_descent = True):
+        # TODO : implement this function if we want to support Theano
+        # based on sort and argsort to implement topk
         raise Exception('Not implemented yet!')
     def reshape(x, shape, ndim = None):
         """Reshapes a tensor.
@@ -193,7 +195,31 @@ elif K._BACKEND == 'tensorflow':
         return K.pack(x_list)
 
     # Finds values and indices of the k largest entries for the last dimension.
-    def top_k(x, k):
+    def top_k(x, k = 1, sorted_by_value_descent = True):
+        """Finds values and indices of the `k` largest entries for the last dimension.
+
+        If the input is a vector (rank-1), finds the `k` largest entries in the vector
+        and outputs their values and indices as vectors.  Thus `values[j]` is the
+        `j`-th largest entry in `input`, and its index is `indices[j]`.
+
+        For matrices (resp. higher rank input), computes the top `k` entries in each
+        row (resp. vector along the last dimension).  Thus,
+
+            values.shape = indices.shape = input.shape[:-1] + [k]
+
+        If two elements are equal, the lower-index element appears first.
+
+        # Parameters
+        ----------
+        input: 1-D or higher `Tensor` with last dimension at least `k`.
+        k: 0-D `int32` `Tensor`.  Number of top elements to look for along the last dimension (along each row for matrices).
+        sorted_by_value_descent: If true the resulting `k` elements will be sorted_by_value_descent by the values in descending order.
+
+        # Returns:
+        ----------
+        values: The `k` largest elements along each last dimensional slice.
+        indices: The indices of `values` within the last dimension of `input`.
+        """
         return tf.nn.top_k(x, k)
 
     def reshape(x, shape):

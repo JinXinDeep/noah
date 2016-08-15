@@ -4,7 +4,7 @@ Created on Aug 4, 2016
 @author: lxh5147
 '''
 import unittest
-from backend import get_shape, get_length_without_padding, unpack, reverse, reshape, inner_product
+from backend import get_shape, get_length_without_padding, unpack, reverse, reshape, inner_product, top_k
 from keras.layers import Input
 import keras.backend as K
 import numpy as np
@@ -77,6 +77,21 @@ class BackendTest(unittest.TestCase):
         f = K.function(inputs = [x, y], outputs = [inner_prod])
         inner_prod_val = f ([[[1, 2, 1], [2, 1, 2]], K.get_value(y)])[0]
         self.assertTrue(np.array_equal(inner_prod_val, [1 + 4 + 3, 2 + 2 + 6]), "inner_prod_val")
+
+    def test_top_k(self):
+        x = K.variable([2, 3, 4, 5, 1, 6])
+        x_top_k, indices_top_k = top_k(x, k = 2)
+        f = K.function(inputs = [x], outputs = [x_top_k, indices_top_k])
+        x_top_k_val, indices_top_k_val = f ([K.get_value(x)])
+        self.assertTrue(np.array_equal(x_top_k_val, [6, 5]), "x_top_k_val")
+        self.assertTrue(np.array_equal(indices_top_k_val, [5, 3]), "indices_top_k_val")
+        # more complicated
+        x = K.variable([[2, 3, 4], [5, 1, 6]])
+        x_top_k, indices_top_k = top_k(x, k = 2)
+        f = K.function(inputs = [x], outputs = [x_top_k, indices_top_k])
+        x_top_k_val, indices_top_k_val = f ([K.get_value(x)])
+        self.assertTrue(np.array_equal(x_top_k_val, [[4, 3], [6, 5]]), "x_top_k_val")
+        self.assertTrue(np.array_equal(indices_top_k_val, [[2, 1], [2, 0]]), "indices_top_k_val")
 
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
