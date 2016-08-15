@@ -6,7 +6,7 @@ Created on Jul 16, 2016
 
 from keras import backend as K
 from keras.engine import Layer
-from .backend import reshape, reverse, inner_product, unpack, top_k, trim_right_padding
+from .backend import reshape, reverse, inner_product, unpack, top_k
 from .utils import check_and_throw_if_fail
 from keras.layers import Dense, BatchNormalization
 from keras.layers.wrappers import TimeDistributed
@@ -14,92 +14,246 @@ from keras.layers.wrappers import TimeDistributed
 from keras import activations, initializations, regularizers
 import numpy as np
 
-'''
-Helper function that performs reshape on a tensor
-'''
+
+class ComposedLayer(Layer):
+    '''A layer that employs a set of children layers to complete its call. All the children layers must be created in its constructor.
+    '''
+    def __init__(self, **kwargs):
+        ''' Constructor of a composed layer, which should be called as the last function call of the constructor of its sub class by that sub class to construct its children layers.
+        '''
+        # Logic copied from layer with small adaption
+        if not hasattr(self, 'input_spec'):
+            self.input_spec = None
+        if not hasattr(self, 'supports_masking'):
+            self.supports_masking = False
+
+        self._uses_learning_phase = False
+
+        # these lists will be filled via successive calls
+        # to self.add_inbound_node()
+        self.inbound_nodes = []
+        self.outbound_nodes = []
+
+
+        self._trainable_weights = []
+        self._non_trainable_weights = []
+        self._regularizers = []
+        self._constraints = {}  # dict {tensor: constraint instance}
+        self.built = False
+
+        # these properties should be set by the user via keyword arguments.
+        # note that 'input_dtype', 'input_shape' and 'batch_input_shape'
+        # are only applicable to input layers: do not pass these keywords
+        # to non-input layers.
+        allowed_kwargs = {'input_shape',
+                          'batch_input_shape',
+                          'input_dtype',
+                          'name',
+                          'trainable',
+                          'create_input_layer'}
+        for kwarg in kwargs.keys():
+            assert kwarg in allowed_kwargs, 'Keyword argument not understood: ' + kwarg
+
+        name = kwargs.get('name')
+        if not name:
+            prefix = self.__class__.__name__.lower()
+            name = prefix + '_' + str(K.get_uid(prefix))
+        self.name = name
+
+        self.trainable = kwargs.get('trainable', True)
+        if 'batch_input_shape' in kwargs or 'input_shape' in kwargs:
+            # in this case we will create an input layer
+            # to insert before the current layer
+            if 'batch_input_shape' in kwargs:
+                batch_input_shape = tuple(kwargs['batch_input_shape'])
+            elif 'input_shape' in kwargs:
+                batch_input_shape = (None,) + tuple(kwargs['input_shape'])
+            self.batch_input_shape = batch_input_shape
+            input_dtype = kwargs.get('input_dtype', K.floatx())
+            self.input_dtype = input_dtype
+            if 'create_input_layer' in kwargs:
+                self.create_input_layer(batch_input_shape, input_dtype)
+
+        self._updates = []
+        self._stateful = False
+        self._layers = []
+        self._build_layers()
+
+    def _build_layers(self):
+        pass
+
+    @property
+    def updates(self):
+        updates = []
+        updates += self._updates
+        for layer in self._layers:
+            if hasattr(layer, 'updates'):
+                updates += layer.updates
+        return updates
+
+    @property
+    def constraints(self):
+        cons = {}
+        for key, value in self._constraints.items():
+            cons[key] = value
+        for layer in self._layers:
+            for key, value in layer.constraints.items():
+                if key in cons:
+                    raise Exception('Received multiple constraints '
+                                    'for one weight tensor: ' + str(key))
+                cons[key] = value
+        return cons
+
+    @property
+    def regularizers(self):
+        regs = []
+        regs += self._regularizers
+        for layer in self._layers:
+            regs += layer.regularizers
+        return regs
+
+    @property
+    def stateful(self):
+        if self._stateful:
+            return self._stateful
+        return any([(hasattr(layer, 'stateful') and layer.stateful) for layer in self._layers])
+
+    def reset_states(self):
+        for layer in self._layers:
+            if hasattr(layer, 'reset_states') and getattr(layer, 'stateful', False):
+                layer.reset_states()
+
+    @property
+    def uses_learning_phase(self):
+        '''True if any layer in the graph uses it.
+        '''
+        if self._uses_learning_phase:
+            return self._uses_learning_phase
+        layers_learning_phase = any([layer.uses_learning_phase for layer in self._layers])
+        regs_learning_phase = any([reg.uses_learning_phase for reg in self.regularizers])
+        return layers_learning_phase or regs_learning_phase
+
+    @property
+    def trainable_weights(self):
+        weights = []
+        weights += self._trainable_weights
+        for layer in self._layers:
+            weights += layer.trainable_weights
+        return weights
+
+    @property
+    def non_trainable_weights(self):
+        weights = []
+        weights += self._non_trainable_weights
+        for layer in self._layers:
+            weights += layer.non_trainable_weights
+        return weights
+
 class ReshapeLayer(Layer):
+    '''Reshape a tensor to the target shape
     '''
-    Refer to: https://www.cs.cmu.edu/~diyiy/docs/naacl16.pdf, formula 8,9 and 10
-    '''
-    def __init__(self, target_shape, target_tensor_shape=None, ** kwargs):
+
+    def __init__(self, target_shape, **kwargs):
+        """Constructs a reshape layer
+        # Parameters
+        ----------
+        target_shape : A tuple of int type, representing the target shape of the output tensor.
+        """
         self.target_shape = tuple(target_shape)
-        self.target_tensor_shape = target_tensor_shape
         super(ReshapeLayer, self).__init__(**kwargs)
 
-    def call(self, x, mask=None):
-        if self.target_tensor_shape:
-            return reshape(x, self.target_tensor_shape, ndim=len(self.target_shape))    # required by theano
-        else:
-            return reshape(x, self.target_shape)
+    def call(self, x, mask = None):
+        return reshape(x, self.target_shape)
 
     def get_output_shape_for(self, input_shape):
         return self.target_shape
 
-'''
-Helper function that performs reshape on a tensor
-'''
+    def get_config(self):
+        config = {'target_shape': self.target_shape}
+        base_config = super(ReshapeLayer, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
 class BiDirectionalLayer(Layer):
-    def call(self, inputs, mask=None):
+    '''Defines a layer that combines one input sequence from left to right and the other sequence from right to left.
+    '''
+    def call(self, inputs, mask = None):
+        """
+        # Parameters
+        ----------
+        inputs : two input tensor, representing the input sequence from left to right and the one from right to left, respectively. Both have a shape of ..., time_steps, input_dim.
+        """
         left_to_right = inputs[0]
         right_to_left = inputs[1]
         ndim = K.ndim(right_to_left)
-        axes = [1, 0] + list(range(2, ndim))
+        axes = [1, 0] + list(range(2, ndim))  # time_steps, nb_samples, ...
         right_to_left = K.permute_dimensions(right_to_left, axes)
         right_to_left = reverse(right_to_left)
         right_to_left = K.permute_dimensions(right_to_left, axes)
-        return K.concatenate([left_to_right, right_to_left], axis=-1)
+        return K.concatenate([left_to_right, right_to_left], axis = -1)
+
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0][:-1] + (input_shapes[0][-1] + input_shapes[1][-1],)
 
-'''
-Helper function that performs reshape on a tensor
-'''
-class MLPClassifierLayer(Layer):
+class MLPClassifierLayer(ComposedLayer):
     '''
     Represents a mlp classifier, which consists of several hidden layers followed by a softmax output layer
     '''
-    def __init__(self, output_dim, hidden_unit_numbers, hidden_unit_activation_functions, output_activation_function='softmax', **kwargs):
-        '''
+
+    def __init__(self, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
+                 output_activation_function = 'softmax', use_sequence_input = True, **kwargs):
+        """
+        # Parameters
+        ----------
+        output_dim: output dimension
         input_sequence: input sequence, batch_size * time_steps * input_dim
         hidden_unit_numbers: number of hidden units of each hidden layer
         hidden_unit_activation_functions: activation function of hidden layers
-        output_dim: output dimension
-        returns a tensor of get_shape: batch_size*time_steps*output_dim
+        
+        returns a tensor of shape: batch_size*time_steps*output_dim
         '''
-        check_and_throw_if_fail(output_dim > 0 , "output_dim")
-        check_and_throw_if_fail(len(hidden_unit_numbers) == len(hidden_unit_activation_functions) , "hidden_unit_numbers")
+        check_and_throw_if_fail(output_dim > 0, "output_dim")
+        check_and_throw_if_fail(len(hidden_unit_numbers) == len(hidden_unit_activation_functions), "hidden_unit_numbers")
+        super(MLPClassifierLayer, self).__init__(**kwargs)
         self.output_dim = output_dim
         self.hidden_unit_numbers = hidden_unit_numbers
         self.hidden_unit_activation_functions = hidden_unit_activation_functions
         self.output_activation_function = output_activation_function
-        if hidden_unit_numbers:
-            self.uses_learning_phase = True
+        self.use_sequence_input = use_sequence_input
         super(MLPClassifierLayer, self).__init__(**kwargs)
 
-    def build(self, input_shape):
-        self.layers = []
-        ndim = len(input_shape)
+    def _build_layers(self):
         for hidden_unit_number, hidden_unit_activation_function in zip(self.hidden_unit_numbers, self.hidden_unit_activation_functions):
-            dense = Dense(hidden_unit_number, activation=hidden_unit_activation_function)
-            if ndim == 3:
+            dense = Dense(hidden_unit_number, activation = hidden_unit_activation_function)
+            if self.use_sequence_input:
                 dense = TimeDistributed(dense)
-            norm = BatchNormalization(mode=2)
-            self.layers.append(dense)
-            self.layers.append(norm)
+            norm = BatchNormalization(mode = 2)
+            self._layers.append(dense)
+            self._layers.append(norm)
 
-        dense = Dense(self.output_dim, activation=self.output_activation_function)
-        if ndim == 3:
+        dense = Dense(self.output_dim, activation = self.output_activation_function)
+        if self.use_sequence_input:
             dense = TimeDistributed(dense)
-        self.layers.append(dense)
+        self._layers.append(dense)
 
-    def call(self, x, mask=None):
+    def call(self, x, mask = None):
         output = x
-        for layer in self.layers:
+        for layer in self._layers:
             output = layer(output)
         return output
 
     def get_output_shape_for(self, input_shape):
         return input_shape[:-1] + (self.output_dim,)
+
+    def get_config(self):
+        config = {'output_dim': self.output_dim,
+                  'use_sequence_input':self.use_sequence_input,
+                  'hidden_unit_numbers': self.hidden_unit_numbers,
+                  'hidden_unit_activation_functions': self.hidden_unit_activation_functions,
+                  'output_activation_function': self.output_activation_function}
+        base_config = super(MLPClassifierLayer, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
 
 class AttentionLayer(Layer):
     '''
@@ -122,23 +276,23 @@ class AttentionLayer(Layer):
         self.U_a = K.variable(initial_U_a)
         self.v_a = K.variable(initial_v_a)
         self.trainable_weights = [self.W_a, self.U_a, self.v_a]
-        self.U_a_h = K.dot(self.h, self.U_a)    # batch_size, time_steps, output_dim
+        self.U_a_h = K.dot(self.h, self.U_a)  # batch_size, time_steps, output_dim
 
-    def call(self, inputs, mask=None):
+    def call(self, inputs, mask = None):
         '''
         s: batch_size , input_dim
         h: batch_size,time_steps, h_input_dim
         '''
         s, h = inputs
-        W_a_s = K.expand_dims(K.dot(s, self.W_a), 1)    # batch_size, 1, output_dim
-        e = K.tanh (W_a_s + self.U_a_h)    # batch_size, time_steps, output_dim
-        e = inner_product(e, self.v_a)    # get_shape: batch_size, time_steps
+        W_a_s = K.expand_dims(K.dot(s, self.W_a), 1)  # batch_size, 1, output_dim
+        e = K.tanh (W_a_s + self.U_a_h)  # batch_size, time_steps, output_dim
+        e = inner_product(e, self.v_a)  # get_shape: batch_size, time_steps
         e = K.exp (e)
-        e_sum = K.sum(e, -1, keepdims=True)    # batch_size, 1
-        a = e / e_sum    # batch_size, time_steps
-        a = K.expand_dims(a)    # batch_size, time_steps, 1
-        c = a * h    # batch_size, time_steps, h_input_dim
-        c = K.sum(c, axis=1)    # batch_size, h_input_dim
+        e_sum = K.sum(e, -1, keepdims = True)  # batch_size, 1
+        a = e / e_sum  # batch_size, time_steps
+        a = K.expand_dims(a)  # batch_size, time_steps, 1
+        c = a * h  # batch_size, time_steps, h_input_dim
+        c = K.sum(c, axis = 1)  # batch_size, h_input_dim
         return c
 
     def get_output_shape_for(self, input_shapes):
@@ -149,9 +303,9 @@ class GRUCell(Layer):
     general version of: http://arxiv.org/pdf/1409.0473v3.pdf, which supports multiple inputs
     '''
     def __init__(self, output_dim,
-                 init='glorot_uniform', inner_init='orthogonal',
-                 activation='tanh', inner_activation='hard_sigmoid', consume_less='gpu',
-                 W_regularizer=None, U_regularizer=None, b_regularizer=None,
+                 init = 'glorot_uniform', inner_init = 'orthogonal',
+                 activation = 'tanh', inner_activation = 'hard_sigmoid', consume_less = 'gpu',
+                 W_regularizer = None, U_regularizer = None, b_regularizer = None,
                  **kwargs):
         self.output_dim = output_dim
         self.init = initializations.get(init)
@@ -211,7 +365,7 @@ class GRUCell(Layer):
             regularizer.set_param(self.b)
             self.regularizers.append(regularizer)
 
-    def call(self, inputs, mask=None):
+    def call(self, inputs, mask = None):
         check_and_throw_if_fail(len(inputs) == 3 , "inputs")
         # the last one is previous state
         h_prev = inputs[-1]
@@ -243,14 +397,14 @@ class GRUCell(Layer):
             r = self.inner_activation(x_r + K.dot(h_prev, self.U_r))
             inner_h = K.dot(r * h_prev , self.U_h)
             hh = self.activation(x_h + inner_h)
-        return  (1 - z) * h_prev + z * hh    # consistent with the formula in the paper
+        return  (1 - z) * h_prev + z * hh  # consistent with the formula in the paper
 
     def get_output_shape_for(self, input_shapes):
         return (input_shapes[0][0], self.output_dim)
 
 def RNNLayerBase(Layer):
 
-    def __init__(self, rnn_cell, attention, output_embedding, mlp_classifier, stateful=False, **kwargs):
+    def __init__(self, rnn_cell, attention, output_embedding, mlp_classifier, stateful = False, **kwargs):
         # TODO: apply drop out to inputs and inner outputs
         self.rnn_cell = rnn_cell
         self.attention = attention
@@ -262,10 +416,10 @@ def RNNLayerBase(Layer):
 
     def get_initial_states(self, x):
         # build an all-zero tensor of get_shape (samples, output_dim)
-        initial_state = K.zeros_like(x)    # (samples, timesteps)
-        initial_state = K.sum(initial_state, axis=(1,))    # (samples,)
-        initial_state = K.expand_dims(initial_state)    # (samples, 1)
-        initial_state = K.tile(initial_state, [1, self.output_dim])    # (samples, output_dim)
+        initial_state = K.zeros_like(x)  # (samples, timesteps)
+        initial_state = K.sum(initial_state, axis = (1,))  # (samples,)
+        initial_state = K.expand_dims(initial_state)  # (samples, 1)
+        initial_state = K.tile(initial_state, [1, self.output_dim])  # (samples, output_dim)
         initial_states = [initial_state for _ in range(len(self.states))]
         return initial_states
 
@@ -273,7 +427,7 @@ def RNNLayerBase(Layer):
         raise NotImplementedError
 
     def step(self, x, states, source_context):
-        h_prev = states[0]    # previous memory
+        h_prev = states[0]  # previous memory
         c = self.attention(h_prev, source_context)
         h = self.rnn_cell([x, c, h_prev])
         output = self.mlp_classifier(h)
@@ -282,7 +436,7 @@ def RNNLayerBase(Layer):
     def build(self, input_shapes):
         raise NotImplementedError
 
-    def call(self, inputs, mask=None):
+    def call(self, inputs, mask = None):
         raise NotImplementedError
 
 def RNNLayer(RNNLayerBase):
@@ -303,16 +457,16 @@ def RNNLayer(RNNLayerBase):
             # initial states: all-zero tensor of get_shape (output_dim)
             self.states = [None]
 
-    def call(self, inputs, mask=None):
+    def call(self, inputs, mask = None):
         # input get_shape: (nb_samples, time (padded with zeros))
         x, source_context = inputs
-        x = trim_right_padding(x)    # to make computation more efficient
+        x = trim_right_padding(x)  # to make computation more efficient
         if self.stateful:
             current_states = self.states
         else:
             current_states = self.get_initial_states(x)
         x = self.embedding(x)
-        x = K.permute_dimensions(x, axes=[1, 0, 2])
+        x = K.permute_dimensions(x, axes = [1, 0, 2])
         input_list = unpack(x)
         successive_states = []
         successive_outputs = []
@@ -322,7 +476,7 @@ def RNNLayer(RNNLayerBase):
             successive_outputs.append(output)
             successive_states.append(current_states)
         outputs = K.pack(successive_outputs)
-        outputs = K.permute_dimensions(outputs, axes=[1, 0, 2])
+        outputs = K.permute_dimensions(outputs, axes = [1, 0, 2])
         new_states = successive_states[-1]
         if self.stateful:
             self.updates = []
@@ -335,7 +489,7 @@ def RNNBeamSearchDecoder(RNNLayerBase):
     '''
     RNN based decoder for prediction, using beam search
     '''
-    def __init__(self, max_output_length, beam_size, number_of_output_sequence=1, eos=None, **kwargs):
+    def __init__(self, max_output_length, beam_size, number_of_output_sequence = 1, eos = None, **kwargs):
         check_and_throw_if_fail(max_output_length > 0, "check_and_throw_if_fail")
         check_and_throw_if_fail(beam_size > 0, "beam_size")
         check_and_throw_if_fail(number_of_output_sequence > 0, "number_of_output_sequence")
@@ -364,7 +518,7 @@ def RNNBeamSearchDecoder(RNNLayerBase):
             y_list.append(yi)
         return K.pack(y_list)
 
-    def call(self, inputs, mask=None):
+    def call(self, inputs, mask = None):
         check_and_throw_if_fail(self.beam_size <= self.mlp_classifier.output_dim , "beam_size")
         # input get_shape: (nb_samples, time (padded with zeros))
         x, source_context = inputs
@@ -373,44 +527,44 @@ def RNNBeamSearchDecoder(RNNLayerBase):
         # x is the initial input, i.e., bos
         current_state = self.get_initial_states(x)[0]
         current_input = self.embedding(x)
-        current_input = K.repeat_elements(current_input, self.beam_size, 0)    #  nb_samples* beam_size, input_dim
+        current_input = K.repeat_elements(current_input, self.beam_size, 0)  #  nb_samples* beam_size, input_dim
         current_state = K.repeat_elements(current_state, self.beam_size, 0)
-        output_score = K.cast (K.zeros_like(x), K.common._FLOATX)    # nb_samples
-        output_score = K.repeat_elements(output_score, self.beam_size, 0)    # nb_samples*beam_size
-        output_score_list = []    # nb_samples, beam_size
+        output_score = K.cast (K.zeros_like(x), K.common._FLOATX)  # nb_samples
+        output_score = K.repeat_elements(output_score, self.beam_size, 0)  # nb_samples*beam_size
+        output_score_list = []  # nb_samples, beam_size
         output_label_id_list = []
         prev_output_index_list = []
         for _ in xrange(self.max_output_length):
-            output, current_states = self.step(current_input, [current_state], source_context)    # nb_samples*beam_size , output_dim
+            output, current_states = self.step(current_input, [current_state], source_context)  # nb_samples*beam_size , output_dim
             current_state = current_states[0]
-            score = K.expand_dims(output_score) + K.log(output)    # nb_samples*beam_size, output_dim
-            score = K.reshape(score, shape=(-1, self.beam_size, self.mlp_classifier.output_dim))    # nb_samples, beam_size,  output_dim
-            top_k_k_score, top_k_k_score_indice = top_k (score, self.beam_size)    # nb_samples, beam_size,  beam_size
-            top_k_k_score = K.reshape(top_k_k_score , shape=(-1, self.beam_size * self.beam_size))    # nb_samples, beam_size* beam_size
-            top_k_k_score_indice = K.reshape(top_k_k_score_indice , shape=(-1, self.beam_size * self.beam_size))
+            score = K.expand_dims(output_score) + K.log(output)  # nb_samples*beam_size, output_dim
+            score = K.reshape(score, shape = (-1, self.beam_size, self.mlp_classifier.output_dim))  # nb_samples, beam_size,  output_dim
+            top_k_k_score, top_k_k_score_indice = top_k (score, self.beam_size)  # nb_samples, beam_size,  beam_size
+            top_k_k_score = K.reshape(top_k_k_score , shape = (-1, self.beam_size * self.beam_size))  # nb_samples, beam_size* beam_size
+            top_k_k_score_indice = K.reshape(top_k_k_score_indice , shape = (-1, self.beam_size * self.beam_size))
             # nb_samples, k, k
-            top_k_score, top_k_scores_indice = top_k (top_k_k_score, self.beam_size)    #  nb_samples, beam_size
-            x = RNNBeamSearchDecoder.gather_per_sample(top_k_k_score_indice, top_k_scores_indice)    # nb_samples, beam_size
-            output_score = K.reshape(top_k_score, shape=(-1,))    # nb_samples*beam_size
+            top_k_score, top_k_scores_indice = top_k (top_k_k_score, self.beam_size)  #  nb_samples, beam_size
+            x = RNNBeamSearchDecoder.gather_per_sample(top_k_k_score_indice, top_k_scores_indice)  # nb_samples, beam_size
+            output_score = K.reshape(top_k_score, shape = (-1,))  # nb_samples*beam_size
             output_score_list.append (top_k_score)
             output_label_id_list.append(x)
-            prev_output_index = top_k_scores_indice // self.beam_size    # nb_samples, beam_size
+            prev_output_index = top_k_scores_indice // self.beam_size  # nb_samples, beam_size
             prev_output_index_list.append (prev_output_index)
-            current_input = self.embedding(x)    # nb_samples, beam_size, embidding.output_dim
-            current_input = K.reshape(current_input, shape=(-1, self.embedding.output_dim))
+            current_input = self.embedding(x)  # nb_samples, beam_size, embidding.output_dim
+            current_input = K.reshape(current_input, shape = (-1, self.embedding.output_dim))
             # current state:  nb_samples*beam_size, output_dim
             current_state = K.gather (current_state, K.reshape(prev_output_index, (-1,)))
         if self.eos:
-            eos = self.eos + K.zeros_like(x)    # b_samples
-            eos = K.reshape (K.repeat_elements(eos, self.number_of_output_sequence), shape=(-1, self.number_of_output_sequence))
+            eos = self.eos + K.zeros_like(x)  # b_samples
+            eos = K.reshape (K.repeat_elements(eos, self.number_of_output_sequence), shape = (-1, self.number_of_output_sequence))
         return RNNBeamSearchDecoder.get_k_best_from_lattice([output_score_list, output_label_id_list, prev_output_index], self.number_of_output_sequence, eos)
 
     @staticmethod
     def cond_set(cond, t1, t2):
         r = []
-        t1 = K.reshape(t1, shape=(-1,))
-        t2 = K.reshape(t1, shape=(-1,))
-        cond = K.reshape(cond, shape=(-1,))
+        t1 = K.reshape(t1, shape = (-1,))
+        t2 = K.reshape(t1, shape = (-1,))
+        cond = K.reshape(cond, shape = (-1,))
         for _c, _1, _2 in zip (unpack(cond), unpack(t1), unpack(t2)):
             r.append(K.switch(_c, _1, _2))
         return K.pack(r)
@@ -424,14 +578,14 @@ def RNNBeamSearchDecoder(RNNLayerBase):
         path_list = []
         path_score, output_indice = top_k (output_score_list[0], k)
         for output_score, output_label_id, prev_output_index in zip(output_score_list, output_label_id_list, prev_output_index):
-            path_list.append (RNNBeamSearchDecoder.gather_per_sample(output_label_id, output_indice))    # nb_sample, k
+            path_list.append (RNNBeamSearchDecoder.gather_per_sample(output_label_id, output_indice))  # nb_sample, k
             score = RNNBeamSearchDecoder.gather_per_sample(output_score, output_indice)
             if eos:
                 cond = K.equal(path_list[-1], eos)
-                path_score = K.reshape(RNNBeamSearchDecoder.cond_set(cond, score, path_score), shape=(-1, k))
+                path_score = K.reshape(RNNBeamSearchDecoder.cond_set(cond, score, path_score), shape = (-1, k))
             output_indice = RNNBeamSearchDecoder.gather_per_sample(prev_output_index, output_indice)
         if eos:
-            path_score, output_indice = top_k(path_score, k)    # sort the top k path by default, nb_samples, k
+            path_score, output_indice = top_k(path_score, k)  # sort the top k path by default, nb_samples, k
             path_list = [RNNBeamSearchDecoder.gather_per_sample(path, output_indice) for path in path_list]
-        path_list = K.permute_dimensions(K.pack(path_list), (1, 2, 0))    # time_steps, nb_samples, k -> nb_samples, k, time_steps
+        path_list = K.permute_dimensions(K.pack(path_list), (1, 2, 0))  # time_steps, nb_samples, k -> nb_samples, k, time_steps
         return path_list, path_score

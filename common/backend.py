@@ -261,7 +261,7 @@ elif K._BACKEND == 'tensorflow':
         """
         return tf.nn.top_k(x, k)
 
-    def reshape(x, shape):
+    def reshape(x, shape, ndim = None):
         """Reshapes a tensor.
 
           Given `tensor`, this operation returns a tensor that has the same values
@@ -325,6 +325,7 @@ elif K._BACKEND == 'tensorflow':
         ----------
         tensor: A `Tensor`.
         shape: A `Tensor` of type `int32`. Defines the shape of the output tensor.
+        ndim : not used.
 
         # Returns
         ------
