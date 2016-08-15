@@ -64,32 +64,32 @@ class BackendTest(unittest.TestCase):
         self.assertTrue(np.array_equal(y_val, [[ [3, 2], [2, 4]], [[4, 2], [2, 4]]]), "y_val")
 
     def test_inner_product(self):
-        x = K.variable([2, 3, 4])
-        y = K.variable([3, 4, 5])
+        x = K.placeholder(shape = (3,))
+        y = K.placeholder(shape = (3,))
         inner_prod = inner_product(x, y)
         f = K.function(inputs = [x, y], outputs = [inner_prod])
-        inner_prod_val = f ([K.get_value(x), K.get_value(y)])[0]
+        inner_prod_val = f ([[2, 3, 4], [3, 4, 5]])[0]
         self.assertEqual(6 + 12 + 20, inner_prod_val, "inner_prod_val")
         # more complicated inner product
         x = Input((3,))
-        y = K.variable([1, 2, 3])
+        y = K.placeholder(shape = (3,))
         inner_prod = inner_product(x, y)
         f = K.function(inputs = [x, y], outputs = [inner_prod])
-        inner_prod_val = f ([[[1, 2, 1], [2, 1, 2]], K.get_value(y)])[0]
+        inner_prod_val = f ([[[1, 2, 1], [2, 1, 2]], [1, 2, 3]])[0]
         self.assertTrue(np.array_equal(inner_prod_val, [1 + 4 + 3, 2 + 2 + 6]), "inner_prod_val")
 
     def test_top_k(self):
-        x = K.variable([2, 3, 4, 5, 1, 6])
+        x = K.placeholder(shape = (6,))
         x_top_k, indices_top_k = top_k(x, k = 2)
         f = K.function(inputs = [x], outputs = [x_top_k, indices_top_k])
-        x_top_k_val, indices_top_k_val = f ([K.get_value(x)])
+        x_top_k_val, indices_top_k_val = f ([[2, 3, 4, 5, 1, 6]])
         self.assertTrue(np.array_equal(x_top_k_val, [6, 5]), "x_top_k_val")
         self.assertTrue(np.array_equal(indices_top_k_val, [5, 3]), "indices_top_k_val")
         # more complicated
-        x = K.variable([[2, 3, 4], [5, 1, 6]])
+        x = K.placeholder(shape = (2, 3))
         x_top_k, indices_top_k = top_k(x, k = 2)
         f = K.function(inputs = [x], outputs = [x_top_k, indices_top_k])
-        x_top_k_val, indices_top_k_val = f ([K.get_value(x)])
+        x_top_k_val, indices_top_k_val = f ([[[2, 3, 4], [5, 1, 6]]])
         self.assertTrue(np.array_equal(x_top_k_val, [[4, 3], [6, 5]]), "x_top_k_val")
         self.assertTrue(np.array_equal(indices_top_k_val, [[2, 1], [2, 0]]), "indices_top_k_val")
 

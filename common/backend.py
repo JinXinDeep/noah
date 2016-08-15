@@ -86,10 +86,49 @@ if K._BACKEND == 'theano':
         the reversed tensor with the same shape of the input
         '''
         return x[::-1]
-    def top_k(k = 1, sorted_by_value_descent = True):
-        # TODO : implement this function if we want to support Theano
-        # based on sort and argsort to implement topk
-        raise Exception('Not implemented yet!')
+    def top_k(x, k = 1):
+        """Finds values and indices of the `k` largest entries for the last dimension sorted by value in descent.
+
+        If the input is a vector (rank-1), finds the `k` largest entries in the vector
+        and outputs their values and indices as vectors.  Thus `values[j]` is the
+        `j`-th largest entry in `input`, and its index is `indices[j]`.
+
+        For matrices (resp. higher rank input), computes the top `k` entries in each
+        row (resp. vector along the last dimension).  Thus,
+
+            values.shape = indices.shape = input.shape[:-1] + [k]
+
+        If two elements are equal, the lower-index element appears first.
+
+        # Parameters
+        ----------
+        input: 1-D or higher `Tensor` with last dimension at least `k`.
+        k: 0-D `int32` `Tensor`.  Number of top elements to look for along the last dimension (along each row for matrices).
+
+        # Returns:
+        ----------
+        values: The `k` largest elements along each last dimensional slice.
+        indices: The indices of `values` within the last dimension of `input`.
+        """
+        x_sorted = T.sort(x)
+        x_sort_arg = T.argsort(x)
+        ndim = x.ndim
+        if ndim == 1:
+            x_sorted = x_sorted[-k:]
+            x_sorted = x_sorted[::-1]
+            x_sort_arg = x_sort_arg[-k:]
+            x_sort_arg = x_sort_arg[::-1]
+            return x_sorted, x_sort_arg
+        else:
+            new_shape = T.stack(*([x.shape[i] for i in range(ndim - 1)] + [k]))
+            x_sorted = T.reshape(x_sorted, newshape = (-1, x.shape[-1]))[:, -k:]
+            x_sorted = x_sorted[:, ::-1]
+            x_sorted = T.reshape(x_sorted, new_shape, ndim = ndim)
+            x_sort_arg = T.reshape(x_sort_arg, newshape = (-1, x.shape[-1]))[:, -k:]
+            x_sort_arg = x_sort_arg[:, ::-1]
+            x_sort_arg = T.reshape(x_sort_arg, new_shape, ndim = ndim)
+            return x_sorted, x_sort_arg
+
     def reshape(x, shape, ndim = None):
         """Reshapes a tensor.
 
