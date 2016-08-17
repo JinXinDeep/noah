@@ -11,7 +11,7 @@ from .utils import check_and_throw_if_fail
 from keras.layers import Dense, BatchNormalization
 from keras.layers.wrappers import TimeDistributed
 
-from keras import activations, initializations, regularizers
+from keras import activations, initializations, regularizers, constraints
 import numpy as np
 
 
@@ -77,10 +77,8 @@ class ComposedLayer(Layer):
         self._updates = []
         self._stateful = False
         self._layers = []
-        self._build_layers()
+        # layers will be constructed in build
 
-    def _build_layers(self):
-        pass
 
     @property
     def updates(self):
@@ -185,7 +183,8 @@ class BiDirectionalLayer(Layer):
         left_to_right = inputs[0]
         right_to_left = inputs[1]
         ndim = K.ndim(right_to_left)
-        axes = [1, 0] + list(range(2, ndim))  # time_steps, nb_samples, ...
+        # reshape nb_samples, time_steps,  ... -> time_steps,nb_samples,...
+        axes = [1, 0] + list(range(2, ndim))
         right_to_left = K.permute_dimensions(right_to_left, axes)
         right_to_left = reverse(right_to_left)
         right_to_left = K.permute_dimensions(right_to_left, axes)
@@ -196,20 +195,20 @@ class BiDirectionalLayer(Layer):
 
 class MLPClassifierLayer(ComposedLayer):
     '''
-    Represents a mlp classifier, which consists of several hidden layers followed by a softmax output layer
+    Represents a mlp classifier, which consists of several hidden layers followed by a softmax/or sigmoid output layer.
     '''
 
     def __init__(self, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
                  output_activation_function = 'softmax', use_sequence_input = True, **kwargs):
-        """
+        '''
         # Parameters
         ----------
         output_dim: output dimension
-        input_sequence: input sequence, batch_size * time_steps * input_dim
-        hidden_unit_numbers: number of hidden units of each hidden layer
-        hidden_unit_activation_functions: activation function of hidden layers
-        
-        returns a tensor of shape: batch_size*time_steps*output_dim
+
+        hidden_unit_numbers: the number of hidden units of each hidden layer.
+        hidden_unit_activation_functions: the activation function of each hidden layers.
+        output_activation_function: activation function for classification, use 'sigmoid' for binary classification.
+        use_sequence_input: the last two dimensions of the input has a shape of time_steps, input_dim
         '''
         check_and_throw_if_fail(output_dim > 0, "output_dim")
         check_and_throw_if_fail(len(hidden_unit_numbers) == len(hidden_unit_activation_functions), "hidden_unit_numbers")
@@ -221,7 +220,7 @@ class MLPClassifierLayer(ComposedLayer):
         self.use_sequence_input = use_sequence_input
         super(MLPClassifierLayer, self).__init__(**kwargs)
 
-    def _build_layers(self):
+    def build(self, input_shape):
         for hidden_unit_number, hidden_unit_activation_function in zip(self.hidden_unit_numbers, self.hidden_unit_activation_functions):
             dense = Dense(hidden_unit_number, activation = hidden_unit_activation_function)
             if self.use_sequence_input:
@@ -253,90 +252,169 @@ class MLPClassifierLayer(ComposedLayer):
         base_config = super(MLPClassifierLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
-
-
 class AttentionLayer(Layer):
     '''
-    Refer to: http://nlp.ict.ac.cn/Admin/kindeditor/attached/file/20141011/20141011133445_31922.pdf
-    TODO: should be straightforward to enhance the attention layer to support advanced attention model, such as coverage
+    Calculates a weighted sum tensor from the given input tensors, according to http://nlp.ict.ac.cn/Admin/kindeditor/attached/file/20141011/20141011133445_31922.pdf
     '''
-    def __init__(self, output_dim, **kwargs):
+    def __init__(self, output_dim, init_W_a = 'glorot_uniform', init_U_a = 'glorot_uniform', init_v_a = 'uniform',
+                 W_a_regularizer = None, U_a_regularizer = None, v_a_regularizer = None,
+                 W_a_constraint = None, U_a_constraint = None, v_a_constraint = None, **kwargs):
+        '''
+        # Parameters
+        ----------
+        output_dim: output dimension of the attention tensor
+        '''
         self.output_dim = output_dim
+        self.init_W_a = initializations.get(init_W_a)
+        self.init_U_a = initializations.get(init_U_a)
+        self.init_v_a = initializations.get(init_v_a)
+
+        self.W_a_regularizer = regularizers.get(W_a_regularizer)
+        self.U_a_regularizer = regularizers.get(U_a_regularizer)
+        self.v_a_regularizer = regularizers.get(v_a_regularizer)
+
+        self.W_a_constraint = constraints.get(W_a_constraint)
+        self.U_a_constraint = constraints.get(U_a_constraint)
+        self.v_a_constraint = constraints.get(v_a_constraint)
+
         super(AttentionLayer, self).__init__(**kwargs)
 
     def build(self, input_shapes):
         '''
-        s' input_shape[0]: batch_size , input_dim
-        h' input_shape[1]: batch_size , time_steps, h_input_dim
+        # Parameters
+        ----------
+        input_shapes: the input shape of s and h, respectively; s with a shape of nb_samples, input_dim while h nb_samples, time_steps, input_dim
         '''
-        initial_W_a = np.random.random((input_shapes[0][-1], self.output_dim))
-        initial_U_a = np.random.random((input_shapes[-1][-1], self.output_dim))
-        initial_v_a = np.random.random((self.output_dim,))
-        self.W_a = K.variable(initial_W_a)
-        self.U_a = K.variable(initial_U_a)
-        self.v_a = K.variable(initial_v_a)
+
+        self.W_a = self.init_W_a((input_shapes[0][-1], self.output_dim))
+        self.U_a = self.init_U_a((input_shapes[-1][-1], self.output_dim))
+        self.v_a = self.init_v_a((self.output_dim,))
         self.trainable_weights = [self.W_a, self.U_a, self.v_a]
-        self.U_a_h = K.dot(self.h, self.U_a)  # batch_size, time_steps, output_dim
+
+        self.regularizers = []
+        if self.W_a_regularizer:
+            self.W_a_regularizer.set_param(self.W_a)
+            self.regularizers.append(self.W_a_regularizer)
+        if self.U_a_regularizer:
+            self.U_a_regularizer.set_param(self.U_a)
+            self.regularizers.append(self.U_a_regularizer)
+        if self.v_a_regularizer:
+            self.v_a_regularizer.set_param(self.v_a)
+            self.regularizers.append(self.v_a_regularizer)
+
+        self.constraints = {}
+        if self.W_a_constraint:
+            self.constraints[self.W_a] = self.W_a_constraint
+        if self.U_a_constraint:
+            self.constraints[self.U_a] = self.U_a_constraint
+        if self.v_a_constraint:
+            self.constraints[self.v_a] = self.v_a_constraint
 
     def call(self, inputs, mask = None):
-        '''
-        s: batch_size , input_dim
-        h: batch_size,time_steps, h_input_dim
-        '''
+        # s: nb_sample,input_dim
+        # h: nb_samples,time_steps, h_input_dim
         s, h = inputs
-        W_a_s = K.expand_dims(K.dot(s, self.W_a), 1)  # batch_size, 1, output_dim
-        e = K.tanh (W_a_s + self.U_a_h)  # batch_size, time_steps, output_dim
-        e = inner_product(e, self.v_a)  # get_shape: batch_size, time_steps
+        U_a_h = K.dot(h, self.U_a)  # nb_samples, time_steps, output_dim
+        W_a_s = K.expand_dims(K.dot(s, self.W_a), 1)  # nb_samples, 1, output_dim
+        e = K.tanh (W_a_s + U_a_h)  # nb_samples, time_steps, output_dim
+        e = inner_product(e, self.v_a)  # nb_samples, time_steps
         e = K.exp (e)
-        e_sum = K.sum(e, -1, keepdims = True)  # batch_size, 1
-        a = e / e_sum  # batch_size, time_steps
-        a = K.expand_dims(a)  # batch_size, time_steps, 1
-        c = a * h  # batch_size, time_steps, h_input_dim
-        c = K.sum(c, axis = 1)  # batch_size, h_input_dim
+        e_sum = K.sum(e, -1, keepdims = True)  # nb_samples, 1
+        a = e / e_sum  # nb_samples, time_steps
+        a = K.expand_dims(a)  # nb_samples, time_steps, 1
+        c = a * h  # nb_samples, time_steps, h_input_dim
+        c = K.sum(c, axis = 1)  # nb_samples, h_input_dim
         return c
 
     def get_output_shape_for(self, input_shapes):
         return (input_shapes[1][0], input_shapes[1][2])
 
+    def get_config(self):
+        config = {'output_dim': self.output_dim,
+                  'init_W_a': self.init_W_a.__name__,
+                  'init_U_a': self.init_U_a.__name__,
+                  'init_v_a': self.init_v_a.__name__,
+                  'W_a_regularizer': self.W_a_regularizer.get_config() if self.W_a_regularizer else None,
+                  'U_a_regularizer': self.U_a_regularizer.get_config() if self.U_a_regularizer else None,
+                  'v_a_regularizer': self.v_a_regularizer.get_config() if self.v_a_regularizer else None,
+                  'W_a_constraint': self.W_a_constraint.get_config() if self.W_a_constraint else None,
+                  'U_a_constraint': self.U_a_constraint.get_config() if self.U_a_constraint else None,
+                  'v_a_constraint': self.v_a_constraint.get_config() if self.v_a_constraint else None }
+        base_config = super(AttentionLayer, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
 class GRUCell(Layer):
+    '''Gated Recurrent Unit - Cho et al. 2014.
+
+    # Arguments
+    ----------
+        output_dim: dimension of the internal projections and the final output.
+        init: weight initialization function.
+            Can be the name of an existing function (str),
+            or a Theano function (see: [initializations](../initializations.md)).
+        inner_init: initialization function of the inner cells.
+        activation: activation function.
+            Can be the name of an existing function (str),
+            or a Theano function (see: [activations](../activations.md)).
+        inner_activation: activation function for the inner cells.
+        W_regularizers: instance of [WeightRegularizer](../regularizers.md)
+            (eg. L1 or L2 regularization), applied to the input weights matrices.
+        U_regularizer: instance of [WeightRegularizer](../regularizers.md)
+            (eg. L1 or L2 regularization), applied to the recurrent weights matrices.
+        b_regularizer: instance of [WeightRegularizer](../regularizers.md),
+            applied to the bias.
+        dropout_Ws: float between 0 and 1. Fraction of the input units to drop for input gates.
+        dropout_U: float between 0 and 1. Fraction of the input units to drop for recurrent connections.
+
+    # References
+    ----------
+        - [On the Properties of Neural Machine Translation: Encoder–Decoder Approaches](http://www.aclweb.org/anthology/W14-4012)
+        - [Empirical Evaluation of Gated Recurrent Neural Networks on Sequence Modeling](http://arxiv.org/pdf/1412.3555v1.pdf)
+        - [A Theoretically Grounded Application of Dropout in Recurrent Neural Networks](http://arxiv.org/abs/1512.05287)
     '''
-    general version of: http://arxiv.org/pdf/1409.0473v3.pdf, which supports multiple inputs
-    '''
+
     def __init__(self, output_dim,
                  init = 'glorot_uniform', inner_init = 'orthogonal',
                  activation = 'tanh', inner_activation = 'hard_sigmoid', consume_less = 'gpu',
-                 W_regularizer = None, U_regularizer = None, b_regularizer = None,
+                 W_regularizers = None, U_regularizer = None, b_regularizer = None,
                  **kwargs):
         self.output_dim = output_dim
         self.init = initializations.get(init)
         self.inner_init = initializations.get(inner_init)
         self.activation = activations.get(activation)
         self.inner_activation = activations.get(inner_activation)
-        self.W_regularizer = W_regularizer
-        self.U_regularizer = U_regularizer
-        self.b_regularizer = b_regularizer
+        if W_regularizers:
+            self.W_regularizers = [regularizers.get(W_regularizer) for W_regularizer in  W_regularizers]
+        else:
+            self.W_regularizers = None
+        self.U_regularizer = regularizers.get(U_regularizer)
+        self.b_regularizer = regularizers.get(b_regularizer)
         self.consume_less = consume_less
+
+        if self.dropout_Ws and any([not dropout_W is None for dropout_W in self.dropout_Ws]):
+            self.uses_learning_phase = True
         super(GRUCell, self).__init__(**kwargs)
 
     def build(self, input_shapes):
-        self.W = []
+        self.Ws = []
+        # multiple inputs supports
         input_dims = [input_shape[1] for input_shape in input_shapes[:-1]]
         if self.consume_less == 'gpu':
             for input_dim in input_dims:
-                self.W.append (self.inner_init((input_dim, 3 * self.output_dim)))
+                self.Ws.append (self.inner_init((input_dim, 3 * self.output_dim)))
             self.U = self.inner_init((self.output_dim, 3 * self.output_dim))
             self.b = K.variable(np.hstack((np.zeros(self.output_dim), np.zeros(self.output_dim), np.zeros(self.output_dim))))
-            self.trainable_weights = self.W + [self.U, self.b]
+            self.trainable_weights = self.Ws + [self.U, self.b]
         else:
             self.W_z = []
             self.W_r = []
             self.W_h = []
-            self.W = []
+            self.Ws = []
             for input_dim in input_dims:
                 self.W_z.append(self.inner_init((input_dim, self.output_dim)))
                 self.W_r.append(self.inner_init((input_dim, self.output_dim)))
                 self.W_h.append(self.inner_init((input_dim, self.output_dim)))
-                self.W.append (K.concatenate([self.W_z[-1], self.W_r[-1], self.W_h[-1]]))
+                self.Ws.append (K.concatenate([self.W_z[-1], self.W_r[-1], self.W_h[-1]]))
 
             self.U_z = self.inner_init((self.output_dim, self.output_dim))
             self.U_r = self.inner_init((self.output_dim, self.output_dim))
@@ -351,27 +429,23 @@ class GRUCell(Layer):
             self.trainable_weights = self.W_z + self.W_r + self.W_h + [self.U_z, self.U_r, self.U_h, self.b_z, self.b_r, self.b_h]
 
         self.regularizers = []
-        if self.W_regularizer:
-            for W in self.W:
-                regularizer = regularizers.get(self.W_regularizer)
-                regularizer.set_param(W)
-                self.regularizers.append(regularizer)
+        if self.W_regularizers:
+            for W, W_regularizer in zip(self.Ws, self.W_regularizers):
+                W_regularizer.set_param(W)
+                self.regularizers.append(W_regularizer)
         if self.U_regularizer:
-            regularizer = regularizers.get(self.U_regularizer)
-            regularizer.set_param(self.U)
-            self.regularizers.append(regularizer)
+            self.U_regularizer.set_param(self.U)
+            self.regularizers.append(self.U_regularizer)
         if self.b_regularizer:
-            regularizer = regularizers.get(self.b_regularizer)
-            regularizer.set_param(self.b)
-            self.regularizers.append(regularizer)
+            self.b_regularizer.set_param(self.b)
+            self.regularizers.append(self.b_regularizer)
 
     def call(self, inputs, mask = None):
-        check_and_throw_if_fail(len(inputs) == 3 , "inputs")
         # the last one is previous state
         h_prev = inputs[-1]
         if self.consume_less == 'gpu':
             x = self.b
-            for y, W in zip(inputs[:-1], self.W):
+            for y, W in zip(inputs[:-1], self.Ws):
                 x += K.dot(y , W)
 
             x_z = x[:, :self.output_dim]
@@ -401,6 +475,20 @@ class GRUCell(Layer):
 
     def get_output_shape_for(self, input_shapes):
         return (input_shapes[0][0], self.output_dim)
+
+    def get_config(self):
+        config = {'output_dim': self.output_dim,
+                  'init': self.init.__name__,
+                  'inner_init': self.inner_init.__name__,
+                  'activation': self.activation.__name__,
+                  'inner_activation': self.inner_activation.__name__,
+                  'consume_less':self.consume_less,
+                  'W_regularizers': [W_regularizer.get_config() if W_regularizer else None for W_regularizer in self.W_regularizers ] if self.W_regularizer else None,
+                  'U_regularizer': self.U_regularizer.get_config() if self.U_regularizer else None,
+                  'b_regularizer': self.b_regularizer.get_config() if self.b_regularizer else None,
+                }
+        base_config = super(GRUCell, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
 
 def RNNLayerBase(Layer):
 
@@ -460,7 +548,6 @@ def RNNLayer(RNNLayerBase):
     def call(self, inputs, mask = None):
         # input get_shape: (nb_samples, time (padded with zeros))
         x, source_context = inputs
-        x = trim_right_padding(x)  # to make computation more efficient
         if self.stateful:
             current_states = self.states
         else:
