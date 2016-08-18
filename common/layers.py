@@ -6,7 +6,7 @@ Created on Jul 16, 2016
 
 from keras import backend as K
 from keras.engine import Layer
-from .backend import reshape, reverse, inner_product, unpack, top_k, gather_by_sample
+from .backend import reshape, reverse, inner_product, unpack, top_k, gather_by_sample, choose_by_cond
 from .utils import check_and_throw_if_fail
 from keras.layers import Dense, BatchNormalization
 from keras.layers.wrappers import TimeDistributed
@@ -673,7 +673,7 @@ def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
             score = gather_by_sample(output_score, output_indice)
             if eos:
                 cond = K.equal(path_list[-1], eos)
-                path_score = K.reshape(cond_set(cond, score, path_score), shape = (-1, k))
+                path_score = K.reshape(choose_by_cond(cond, score, path_score), shape = (-1, k))
             output_indice = gather_by_sample(prev_output_index, output_indice)
         if eos:
             path_score, output_indice = top_k(path_score, k)  # sort the top k path by default, nb_samples, k

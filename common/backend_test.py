@@ -4,10 +4,11 @@ Created on Aug 4, 2016
 @author: lxh5147
 '''
 import unittest
-from backend import get_shape, get_length_without_padding, unpack, reverse, reshape, inner_product, top_k, gather_by_sample
+from backend import get_shape, get_length_without_padding, unpack, reverse, reshape, inner_product, top_k, gather_by_sample, choose_by_cond
 from keras.layers import Input
 import keras.backend as K
 import numpy as np
+
 class BackendTest(unittest.TestCase):
 
 
@@ -107,6 +108,15 @@ class BackendTest(unittest.TestCase):
         f = K.function(inputs = [x, indices], outputs = [x_selected])
         x_selected_val = f ([[[[1, 2], [3, 4]], [[5, 6], [7, 8]]], [0, 1]])[0]
         self.assertTrue(np.array_equal(x_selected_val, [[1, 2], [7, 8]]), "x_selected_val")
+
+    def test_choose_with_cond(self):
+        x1 = K.placeholder(shape = (3,))
+        x2 = K.placeholder(shape = (3,))
+        cond = K.placeholder(shape = (3,), dtype = "int32")
+        x_selected = choose_by_cond(cond, x1, x2)
+        f = K.function(inputs = [cond, x1, x2], outputs = [x_selected])
+        x_selected_val = f ([[0, 0, 1], [1, 2, 3], [4, 5, 6] ])[0]
+        self.assertTrue(np.array_equal(x_selected_val, [4, 5, 3]), "x_selected_val")
 
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']

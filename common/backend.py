@@ -79,6 +79,29 @@ def gather_by_sample(x, indices):
         y_list.append(y_i)
     return K.pack(y_list)
 
+def choose_by_cond(cond, _1, _2):
+    '''Performs element wise choose from _1 or _2 based on condition cond. At a give position, if the element in cond is 1, select the element from _1 otherwise from _2 from the same position.
+
+    # Parameters
+    ----------
+    cond : a binary tensor
+    _1 : first tensor with the same shape of cond
+    _2: second tensor with the shape of cond and the same data type of _1
+
+    # Returns
+    ------
+    a tensor with the shape of cond and same data type of _1
+    '''
+    r = []
+    original_shape = K.shape(cond)
+    _1 = K.reshape(_1, shape = (-1,))
+    _2 = K.reshape(_2, shape = (-1,))
+    cond = K.reshape(cond, shape = (-1,))
+    for _c, _1, _2 in zip (unpack(cond), unpack(_1), unpack(_2)):
+        r.append(K.switch(_c, _1, _2))
+    output = K.pack(r)
+    return K.reshape(output, original_shape)
+
 if K._BACKEND == 'theano':
     from theano import tensor as T
     def unpack(x):
