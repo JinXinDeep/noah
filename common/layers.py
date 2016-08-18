@@ -490,21 +490,24 @@ class GRUCell(Layer):
         base_config = super(GRUCell, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
-def RNNLayerBase(Layer):
-
-    def __init__(self, rnn_cell, attention, output_embedding, mlp_classifier, stateful = False, **kwargs):
+def RNNDecoderLayerBase(ComposedLayer):
+    '''RNN layer base class, which employs a RNN, an attention mechanism, an embedding, and a MLP classifier to decode a sequence.
+    '''
+    def __init__(self, rnn_cell, attention, embedding, mlp_classifier, stateful = False, **kwargs):
         # TODO: apply drop out to inputs and inner outputs
         self.rnn_cell = rnn_cell
         self.attention = attention
         self.mlp_classifier = mlp_classifier
-        self.output_embedding = output_embedding
+        self.embedding = embedding
         self.stateful = stateful
-        self.uses_learning_phase = mlp_classifier.uses_learning_phase or rnn_cell.uses_learning_phase or output_embedding.output_embedding or attention.uses_learning_phase
-        super(RNNLayerBase, self).__init__(**kwargs)
+        super(RNNDecoderLayerBase, self).__init__(**kwargs)
+        # Since self._layers is set to empty in parent's constructor, we must put the following line after the calling of the parent's constructor
+        self._layers = [self.rnn_cell, self.attention, self.mlp_classifier, self.embedding]
+
 
     def get_initial_states(self, x):
         # build an all-zero tensor of get_shape (samples, output_dim)
-        initial_state = K.zeros_like(x)  # (samples, timesteps)
+        initial_state = K.zeros_like(x)  # shape of x: (nb_samples, time_steps)
         initial_state = K.sum(initial_state, axis = (1,))  # (samples,)
         initial_state = K.expand_dims(initial_state)  # (samples, 1)
         initial_state = K.tile(initial_state, [1, self.output_dim])  # (samples, output_dim)
@@ -515,11 +518,35 @@ def RNNLayerBase(Layer):
         raise NotImplementedError
 
     def step(self, x, states, source_context):
-        h_prev = states[0]  # previous memory
+        h_prev = states[0]  # previous output
         c = self.attention(h_prev, source_context)
         h = self.rnn_cell([x, c, h_prev])
         output = self.mlp_classifier(h)
         return output, [h]
+
+    def get_config(self):
+        config = {'rnn_cell': {'class_name': self.rnn_cell.__class__.__name__,
+                            'config': self.rnn_cell.get_config()},
+                  'attention': {'class_name': self.attention.__class__.__name__,
+                            'attention': self.attention.get_config()},
+                  'embedding': {'class_name': self.embedding.__class__.__name__,
+                            'embedding': self.embedding.get_config()},
+                  'mlp_classifier': {'class_name': self.mlp_classifier.__class__.__name__,
+                            'attention': self.mlp_classifier.get_config()},
+                  'stateful': self.stateful
+                  }
+        base_config = super(ComposedLayer, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+    @classmethod
+    def from_config(cls, config):
+        from keras.utils.layer_utils import layer_from_config
+        rnn_cell = layer_from_config(config.pop('rnn_cell'))
+        attention = layer_from_config(config.pop('attention'))
+        embedding = layer_from_config(config.pop('embedding'))
+        mlp_classifier = layer_from_config(config.pop('mlp_classifier'))
+        stateful = config.pop('stateful')
+        return cls(rnn_cell, attention, embedding, mlp_classifier, stateful, **config)
 
     def build(self, input_shapes):
         raise NotImplementedError
@@ -527,9 +554,8 @@ def RNNLayerBase(Layer):
     def call(self, inputs, mask = None):
         raise NotImplementedError
 
-def RNNLayer(RNNLayerBase):
-    '''
-    RNN based decoder for training, using the ground truth output
+def RNNDecoderLayer(RNNDecoderLayerBase):
+    '''Defines a RNN based decoder for training, using the ground truth output
     '''
     def get_output_shape_for(self, input_shapes):
         input_shape, _ = input_shapes
@@ -537,7 +563,6 @@ def RNNLayer(RNNLayerBase):
 
     def build(self, input_shapes):
         input_shape, _ = input_shapes
-        check_and_throw_if_fail(len(input_shape) == 2, "input_shape=(nb_samples, time_steps)")
         if self.stateful:
             check_and_throw_if_fail(not input_shape[0] , 'If a RNN is stateful, a complete  input_shape must be provided (including batch size).')
             self.states = [K.zeros((input_shape[0], self.rnn_cell.output_dim))]
@@ -572,9 +597,8 @@ def RNNLayer(RNNLayerBase):
         return outputs
 
 
-def RNNBeamSearchDecoder(RNNLayerBase):
-    '''
-    RNN based decoder for prediction, using beam search
+def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
+    '''Defines a RNN based decoder for prediction, using beam search.
     '''
     def __init__(self, max_output_length, beam_size, number_of_output_sequence = 1, eos = None, **kwargs):
         check_and_throw_if_fail(max_output_length > 0, "check_and_throw_if_fail")
@@ -585,7 +609,7 @@ def RNNBeamSearchDecoder(RNNLayerBase):
         self.beam_size = beam_size
         self.number_of_output_sequence = number_of_output_sequence
         self.eos = None
-        super(RNNBeamSearchDecoder, self).__init__(**kwargs)
+        super(RNNDecoderLayerWithBeamSearch, self).__init__(**kwargs)
 
     def get_output_shape_for(self, input_shape):
         # two outputs: sequence and score
@@ -631,7 +655,7 @@ def RNNBeamSearchDecoder(RNNLayerBase):
             top_k_k_score_indice = K.reshape(top_k_k_score_indice , shape = (-1, self.beam_size * self.beam_size))
             # nb_samples, k, k
             top_k_score, top_k_scores_indice = top_k (top_k_k_score, self.beam_size)  #  nb_samples, beam_size
-            x = RNNBeamSearchDecoder.gather_per_sample(top_k_k_score_indice, top_k_scores_indice)  # nb_samples, beam_size
+            x = RNNDecoderLayerWithBeamSearch.gather_per_sample(top_k_k_score_indice, top_k_scores_indice)  # nb_samples, beam_size
             output_score = K.reshape(top_k_score, shape = (-1,))  # nb_samples*beam_size
             output_score_list.append (top_k_score)
             output_label_id_list.append(x)
@@ -644,7 +668,7 @@ def RNNBeamSearchDecoder(RNNLayerBase):
         if self.eos:
             eos = self.eos + K.zeros_like(x)  # b_samples
             eos = K.reshape (K.repeat_elements(eos, self.number_of_output_sequence), shape = (-1, self.number_of_output_sequence))
-        return RNNBeamSearchDecoder.get_k_best_from_lattice([output_score_list, output_label_id_list, prev_output_index], self.number_of_output_sequence, eos)
+        return RNNDecoderLayerWithBeamSearch.get_k_best_from_lattice([output_score_list, output_label_id_list, prev_output_index], self.number_of_output_sequence, eos)
 
     @staticmethod
     def cond_set(cond, t1, t2):
@@ -665,14 +689,14 @@ def RNNBeamSearchDecoder(RNNLayerBase):
         path_list = []
         path_score, output_indice = top_k (output_score_list[0], k)
         for output_score, output_label_id, prev_output_index in zip(output_score_list, output_label_id_list, prev_output_index):
-            path_list.append (RNNBeamSearchDecoder.gather_per_sample(output_label_id, output_indice))  # nb_sample, k
-            score = RNNBeamSearchDecoder.gather_per_sample(output_score, output_indice)
+            path_list.append (RNNDecoderLayerWithBeamSearch.gather_per_sample(output_label_id, output_indice))  # nb_sample, k
+            score = RNNDecoderLayerWithBeamSearch.gather_per_sample(output_score, output_indice)
             if eos:
                 cond = K.equal(path_list[-1], eos)
-                path_score = K.reshape(RNNBeamSearchDecoder.cond_set(cond, score, path_score), shape = (-1, k))
-            output_indice = RNNBeamSearchDecoder.gather_per_sample(prev_output_index, output_indice)
+                path_score = K.reshape(RNNDecoderLayerWithBeamSearch.cond_set(cond, score, path_score), shape = (-1, k))
+            output_indice = RNNDecoderLayerWithBeamSearch.gather_per_sample(prev_output_index, output_indice)
         if eos:
             path_score, output_indice = top_k(path_score, k)  # sort the top k path by default, nb_samples, k
-            path_list = [RNNBeamSearchDecoder.gather_per_sample(path, output_indice) for path in path_list]
+            path_list = [RNNDecoderLayerWithBeamSearch.gather_per_sample(path, output_indice) for path in path_list]
         path_list = K.permute_dimensions(K.pack(path_list), (1, 2, 0))  # time_steps, nb_samples, k -> nb_samples, k, time_steps
         return path_list, path_score
