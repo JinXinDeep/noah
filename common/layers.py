@@ -6,7 +6,7 @@ Created on Jul 16, 2016
 
 from keras import backend as K
 from keras.engine import Layer
-from .backend import reshape, reverse, inner_product, unpack, top_k
+from .backend import reshape, reverse, inner_product, unpack, top_k, gather_by_sample
 from .utils import check_and_throw_if_fail
 from keras.layers import Dense, BatchNormalization
 from keras.layers.wrappers import TimeDistributed
@@ -621,17 +621,7 @@ def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
         check_and_throw_if_fail(len(input_shape) == 2, "input_shape=(nb_samples, source_context_input_dim")
         self.states = [None]
 
-    @staticmethod
-    def gather_per_sample(x, indices):
-        y_list = []
-        for x_i , i in zip(unpack(x), unpack(indices)):
-            y_i = K.gather(x_i, i)
-            y_list.append(y_i)
-        return K.pack(y_list)
-
     def call(self, inputs, mask = None):
-        check_and_throw_if_fail(self.beam_size <= self.mlp_classifier.output_dim , "beam_size")
-        # input get_shape: (nb_samples, time (padded with zeros))
         x, source_context = inputs
         if K.ndim(x) == 2:
             x = K.squeeze(x, 1)
@@ -655,7 +645,7 @@ def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
             top_k_k_score_indice = K.reshape(top_k_k_score_indice , shape = (-1, self.beam_size * self.beam_size))
             # nb_samples, k, k
             top_k_score, top_k_scores_indice = top_k (top_k_k_score, self.beam_size)  #  nb_samples, beam_size
-            x = RNNDecoderLayerWithBeamSearch.gather_per_sample(top_k_k_score_indice, top_k_scores_indice)  # nb_samples, beam_size
+            x = gather_by_sample(top_k_k_score_indice, top_k_scores_indice)  # nb_samples, beam_size
             output_score = K.reshape(top_k_score, shape = (-1,))  # nb_samples*beam_size
             output_score_list.append (top_k_score)
             output_label_id_list.append(x)
@@ -679,14 +669,14 @@ def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
         path_list = []
         path_score, output_indice = top_k (output_score_list[0], k)
         for output_score, output_label_id, prev_output_index in zip(output_score_list, output_label_id_list, prev_output_index):
-            path_list.append (RNNDecoderLayerWithBeamSearch.gather_per_sample(output_label_id, output_indice))  # nb_sample, k
-            score = RNNDecoderLayerWithBeamSearch.gather_per_sample(output_score, output_indice)
+            path_list.append (RNNDecoderLayerWithBeamSearch.gather_by_sample(output_label_id, output_indice))  # nb_sample, k
+            score = RNNDecoderLayerWithBeamSearch.gather_by_sample(output_score, output_indice)
             if eos:
                 cond = K.equal(path_list[-1], eos)
                 path_score = K.reshape(RNNDecoderLayerWithBeamSearch.cond_set(cond, score, path_score), shape = (-1, k))
-            output_indice = RNNDecoderLayerWithBeamSearch.gather_per_sample(prev_output_index, output_indice)
+            output_indice = RNNDecoderLayerWithBeamSearch.gather_by_sample(prev_output_index, output_indice)
         if eos:
             path_score, output_indice = top_k(path_score, k)  # sort the top k path by default, nb_samples, k
-            path_list = [RNNDecoderLayerWithBeamSearch.gather_per_sample(path, output_indice) for path in path_list]
+            path_list = [RNNDecoderLayerWithBeamSearch.gather_by_sample(path, output_indice) for path in path_list]
         path_list = K.permute_dimensions(K.pack(path_list), (1, 2, 0))  # time_steps, nb_samples, k -> nb_samples, k, time_steps
         return path_list, path_score

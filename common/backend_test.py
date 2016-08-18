@@ -4,7 +4,7 @@ Created on Aug 4, 2016
 @author: lxh5147
 '''
 import unittest
-from backend import get_shape, get_length_without_padding, unpack, reverse, reshape, inner_product, top_k
+from backend import get_shape, get_length_without_padding, unpack, reverse, reshape, inner_product, top_k, gather_by_sample
 from keras.layers import Input
 import keras.backend as K
 import numpy as np
@@ -92,6 +92,21 @@ class BackendTest(unittest.TestCase):
         x_top_k_val, indices_top_k_val = f ([[[2, 3, 4], [5, 1, 6]]])
         self.assertTrue(np.array_equal(x_top_k_val, [[4, 3], [6, 5]]), "x_top_k_val")
         self.assertTrue(np.array_equal(indices_top_k_val, [[2, 1], [2, 0]]), "indices_top_k_val")
+
+    def test_gather_by_sample(self):
+        x = K.placeholder(shape = (2, 3))
+        indices = K.placeholder(shape = (2,), dtype = 'int32')
+        x_selected = gather_by_sample(x, indices)
+        f = K.function(inputs = [x, indices], outputs = [x_selected])
+        x_selected_val = f ([[[1, 2, 3], [4, 5, 6]], [2, 1]])[0]
+        self.assertTrue(np.array_equal(x_selected_val, [3, 5]), "x_selected_val")
+        # more complicated case
+        x = K.placeholder(shape = (2, 2, 2))
+        indices = K.placeholder(shape = (2,), dtype = 'int32')
+        x_selected = gather_by_sample(x, indices)
+        f = K.function(inputs = [x, indices], outputs = [x_selected])
+        x_selected_val = f ([[[[1, 2], [3, 4]], [[5, 6], [7, 8]]], [0, 1]])[0]
+        self.assertTrue(np.array_equal(x_selected_val, [[1, 2], [7, 8]]), "x_selected_val")
 
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
