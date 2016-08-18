@@ -624,9 +624,9 @@ def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
     @staticmethod
     def gather_per_sample(x, indices):
         y_list = []
-        for xi , indice in zip(unpack(x), unpack(indices)):
-            yi = K.gather(xi, indice)
-            y_list.append(yi)
+        for x_i , i in zip(unpack(x), unpack(indices)):
+            y_i = K.gather(x_i, i)
+            y_list.append(y_i)
         return K.pack(y_list)
 
     def call(self, inputs, mask = None):
@@ -669,16 +669,6 @@ def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
             eos = self.eos + K.zeros_like(x)  # b_samples
             eos = K.reshape (K.repeat_elements(eos, self.number_of_output_sequence), shape = (-1, self.number_of_output_sequence))
         return RNNDecoderLayerWithBeamSearch.get_k_best_from_lattice([output_score_list, output_label_id_list, prev_output_index], self.number_of_output_sequence, eos)
-
-    @staticmethod
-    def cond_set(cond, t1, t2):
-        r = []
-        t1 = K.reshape(t1, shape = (-1,))
-        t2 = K.reshape(t1, shape = (-1,))
-        cond = K.reshape(cond, shape = (-1,))
-        for _c, _1, _2 in zip (unpack(cond), unpack(t1), unpack(t2)):
-            r.append(K.switch(_c, _1, _2))
-        return K.pack(r)
 
     @staticmethod
     def get_k_best_from_lattice(lattice, k, eos):
