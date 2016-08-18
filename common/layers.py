@@ -669,14 +669,14 @@ def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
         path_list = []
         path_score, output_indice = top_k (output_score_list[0], k)
         for output_score, output_label_id, prev_output_index in zip(output_score_list, output_label_id_list, prev_output_index):
-            path_list.append (RNNDecoderLayerWithBeamSearch.gather_by_sample(output_label_id, output_indice))  # nb_sample, k
-            score = RNNDecoderLayerWithBeamSearch.gather_by_sample(output_score, output_indice)
+            path_list.append (gather_by_sample(output_label_id, output_indice))  # nb_sample, k
+            score = gather_by_sample(output_score, output_indice)
             if eos:
                 cond = K.equal(path_list[-1], eos)
-                path_score = K.reshape(RNNDecoderLayerWithBeamSearch.cond_set(cond, score, path_score), shape = (-1, k))
-            output_indice = RNNDecoderLayerWithBeamSearch.gather_by_sample(prev_output_index, output_indice)
+                path_score = K.reshape(cond_set(cond, score, path_score), shape = (-1, k))
+            output_indice = gather_by_sample(prev_output_index, output_indice)
         if eos:
             path_score, output_indice = top_k(path_score, k)  # sort the top k path by default, nb_samples, k
-            path_list = [RNNDecoderLayerWithBeamSearch.gather_by_sample(path, output_indice) for path in path_list]
+            path_list = [gather_by_sample(path, output_indice) for path in path_list]
         path_list = K.permute_dimensions(K.pack(path_list), (1, 2, 0))  # time_steps, nb_samples, k -> nb_samples, k, time_steps
         return path_list, path_score
