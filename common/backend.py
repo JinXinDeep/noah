@@ -26,19 +26,25 @@ def get_shape(x):
     else:
         raise Exception('You tried to call get_shape on "' + x.name + '". This tensor has no information about its expected input get_shape.')
 
-def get_length_without_padding(x):
-    '''Gets length without padding (right) of a input tensor.
+def get_time_step_length_without_padding(x, time_step_dim = -2, padding = 0):
+    '''Gets time steps without padding (right) of a input tensor.
 
     # Parameters
     ----------
-    x : a tensor whose dimensions >=3 , with the last two dimensions of the shape time_steps, input_dim
-
+    x : a tensor whose dimensions >=3
+    time_step_dim: the time step dimension of x
+    padding : a scalar tensor that represents the padding
     # Returns
     ------
     a tensor represents the length of the input tensor after removing all right padding zeros
     '''
-    s = K.sum(x, axis = -1)  # ..., time_steps
-    return K.sum (K.cast(K.not_equal(s, 0), 'int32'), axis = -1)  # ...
+    ndim = K.ndim(x)
+    time_step_dim = time_step_dim % ndim
+    x = K.cast(K.not_equal(x, padding), 'int32')  # binary tensor
+    axis = [i for i in range(ndim) if i != time_step_dim]
+    s = K.sum(x, axis)
+    s = K.cast(K.not_equal(s, 0), 'int32')
+    return K.sum(s)
 
 def inner_product(x, y):
     '''Gets the inner product between a tensor and a vector. The last dimension of that tensor must have the same shape as the vector.
@@ -59,25 +65,41 @@ def inner_product(x, y):
     output = K.squeeze(output, -1)
     return output
 
-def gather_by_sample(x, indices):
-    '''Performs gather operation along the first dimension, i.e., ret[i] = gather( x[i], indices[i]).
-    For example, when x is a matrix, and indices is a vector, it selects one element for each row from x.
-    Note that this is different from gather, which selects |indices| ndim-1 sub tensors (i.e., x[i], where i = indices[:::]) from x
+def beam_search(initial_input, initial_state, constant_context, embedding, step_func, beam_size = 1, max_length = 20):
+    number_of_samples = K.shape(initial_input)[0]
+    state_dim = K.shape(initial_state)[-1]
+    current_input = K.repeat_elements(initial_input, beam_size, 0)  # shape: nb_samples*beam_size, input_dim
+    current_state = K.repeat_elements(initial_state, beam_size, 0)  # shape: nb_samples*beam_size, state_dim
+    output_score = K.sum(K.zeros_like(current_state), -1)  # shape: nb_samples*beam_size
 
-    # Parameters
-    ----------
-    x : a tensor with a shape nb_samples, ...; its number of dimensions >= 2
-    indices : a tensor of type int with a shape nb_sample,...; its number of dimensions <= # of dimensions of x - 1
+    output_score_list = []  # nb_samples, beam_size
+    output_label_id_list = []
+    prev_output_index_list = []  # the index of candidate from which current label id is generated
 
-    # Returns
-    ------
-    a tensor with the shape of nb_samples, ..., where ret[i,:::,:::]= x[i,indices[i,:::],:::]; and its number of dimensions = # dimensions of x + # dimension of indices - 2
-    '''
-    y_list = []
-    for x_i , i in zip(unpack(x), unpack(indices)):
-        y_i = K.gather(x_i, i)
-        y_list.append(y_i)
-    return K.pack(y_list)
+    # TODO: support the case that max_length is a scalar tensor
+    for _ in xrange(max_length):
+        _step_score, _state = step_func(current_input, current_state, constant_context)  # nb_samples*beam_size , output_dim
+        output_dim = K.shape(_step_score)[-1]
+        # accumulate score
+        _score = K.expand_dims(output_score) + K.log(_step_score)  # nb_samples*beam_size, output_dim
+        # select top output labels for each sample
+        _score = K.reshape(_score, shape = K.pack([number_of_samples, beam_size * output_dim ]))  # nb_samples, beam_size* output_dim
+        _top_score , _top_indice = top_k (_score, beam_size)  # nb_samples, beam_size
+        # update accumulated output score
+        output_score_list.append (_top_score)
+        output_score = K.reshape(_top_score, shape = (-1,))  # nb_samples * beam_size
+        # update output label and previous output index
+        # _top_indice = beam_id * output_dim + output_label_id
+        prev_output_index = _top_indice // output_dim
+        prev_output_index_list.append(prev_output_index)
+        output_label_id = _top_indice % output_dim
+        output_label_id_list.append (output_label_id)
+        # update current input and current_state
+        current_input = embedding (K.reshape(output_label_id, shape = (-1,)))  # nb_samples* beam_siz, input_dim
+        # _state : nb_samples*beam_size, state_dim
+        current_state = K.reshape (K.gather(_state, prev_output_index), shape = K.pack([number_of_samples * beam_size , state_dim ]))  # nb_samples, beam_size, state_dim
+
+    return output_label_id_list, prev_output_index_list, output_score_list
 
 def choose_by_cond(cond, _1, _2):
     '''Performs element wise choose from _1 or _2 based on condition cond. At a give position, if the element in cond is 1, select the element from _1 otherwise from _2 from the same position.
