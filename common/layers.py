@@ -6,7 +6,7 @@ Created on Jul 16, 2016
 
 from keras import backend as K
 from keras.engine import Layer
-from .backend import reshape, reverse, inner_product, unpack, top_k, gather_by_sample, choose_by_cond
+from .backend import reshape, reverse, inner_product, unpack, top_k, beam_search, choose_by_cond
 from .utils import check_and_throw_if_fail
 from keras.layers import Dense, BatchNormalization
 from keras.layers.wrappers import TimeDistributed
@@ -622,59 +622,33 @@ def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
         self.states = [None]
 
     def call(self, inputs, mask = None):
-        x, source_context = inputs
-        if K.ndim(x) == 2:
-            x = K.squeeze(x, 1)
-        # x is the initial input, i.e., bos
-        current_state = self.get_initial_states(x)[0]
-        current_input = self.embedding(x)
-        current_input = K.repeat_elements(current_input, self.beam_size, 0)  #  nb_samples* beam_size, input_dim
-        current_state = K.repeat_elements(current_state, self.beam_size, 0)
-        output_score = K.cast (K.zeros_like(x), K.common._FLOATX)  # nb_samples
-        output_score = K.repeat_elements(output_score, self.beam_size, 0)  # nb_samples*beam_size
-        output_score_list = []  # nb_samples, beam_size
-        output_label_id_list = []
-        prev_output_index_list = []
-        for _ in xrange(self.max_output_length):
-            output, current_states = self.step(current_input, [current_state], source_context)  # nb_samples*beam_size , output_dim
-            current_state = current_states[0]
-            score = K.expand_dims(output_score) + K.log(output)  # nb_samples*beam_size, output_dim
-            score = K.reshape(score, shape = (-1, self.beam_size, self.mlp_classifier.output_dim))  # nb_samples, beam_size,  output_dim
-            top_k_k_score, top_k_k_score_indice = top_k (score, self.beam_size)  # nb_samples, beam_size,  beam_size
-            top_k_k_score = K.reshape(top_k_k_score , shape = (-1, self.beam_size * self.beam_size))  # nb_samples, beam_size* beam_size
-            top_k_k_score_indice = K.reshape(top_k_k_score_indice , shape = (-1, self.beam_size * self.beam_size))
-            # nb_samples, k, k
-            top_k_score, top_k_scores_indice = top_k (top_k_k_score, self.beam_size)  #  nb_samples, beam_size
-            x = gather_by_sample(top_k_k_score_indice, top_k_scores_indice)  # nb_samples, beam_size
-            output_score = K.reshape(top_k_score, shape = (-1,))  # nb_samples*beam_size
-            output_score_list.append (top_k_score)
-            output_label_id_list.append(x)
-            prev_output_index = top_k_scores_indice // self.beam_size  # nb_samples, beam_size
-            prev_output_index_list.append (prev_output_index)
-            current_input = self.embedding(x)  # nb_samples, beam_size, embidding.output_dim
-            current_input = K.reshape(current_input, shape = (-1, self.embedding.output_dim))
-            # current state:  nb_samples*beam_size, output_dim
-            current_state = K.gather (current_state, K.reshape(prev_output_index, (-1,)))
-        if self.eos:
-            eos = self.eos + K.zeros_like(x)  # b_samples
-            eos = K.reshape (K.repeat_elements(eos, self.number_of_output_sequence), shape = (-1, self.number_of_output_sequence))
-        return RNNDecoderLayerWithBeamSearch.get_k_best_from_lattice([output_score_list, output_label_id_list, prev_output_index], self.number_of_output_sequence, eos)
+        initial_input, source_context = inputs
+        if K.ndim(initial_input) == 2:
+            initial_input = K.squeeze(initial_input, 1)
+        initial_state = K.zeros(shape = K.pack([K.shape(initial_input)[0], self.output_dim]))  # (samples, timesteps, input_dim)
+        def _step_func(current_input, current_state, constant_context):
+            _step_score, _states = self.step(current_input, [current_state], constant_context)
+            return _step_score, _states[0]
+        lattice = beam_search(initial_input, initial_state, source_context, self.embedding,
+                                         step_func = _step_func, beam_size = self.beam_size, max_length = self.max_output_length)
+
+       return RNNDecoderLayerWithBeamSearch.get_k_best_from_lattice(lattice, self.number_of_output_sequence, eos)
 
     @staticmethod
     def get_k_best_from_lattice(lattice, k, eos):
         # from back to front
         for l in lattice:
             l.reverse()
-        output_score_list, output_label_id_list, prev_output_index = lattice
+        output_label_id_list, prev_output_index_list, output_score_list = lattice
         path_list = []
         path_score, output_indice = top_k (output_score_list[0], k)
-        for output_score, output_label_id, prev_output_index in zip(output_score_list, output_label_id_list, prev_output_index):
+        for output_score, output_label_id, prev_output_index in zip(output_score_list, output_label_id_list, prev_output_index_list):
             path_list.append (gather_by_sample(output_label_id, output_indice))  # nb_sample, k
             score = gather_by_sample(output_score, output_indice)
             if eos:
                 cond = K.equal(path_list[-1], eos)
                 path_score = K.reshape(choose_by_cond(cond, score, path_score), shape = (-1, k))
-            output_indice = gather_by_sample(prev_output_index, output_indice)
+            output_indice = gather_by_sample(prev_output_index_list, output_indice)
         if eos:
             path_score, output_indice = top_k(path_score, k)  # sort the top k path by default, nb_samples, k
             path_list = [gather_by_sample(path, output_indice) for path in path_list]
