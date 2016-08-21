@@ -99,7 +99,29 @@ def beam_search(initial_input, initial_state, constant_context, embedding, step_
         # _state : nb_samples*beam_size, state_dim
         current_state = K.reshape (K.gather(_state, prev_output_index), shape = K.pack([number_of_samples * beam_size , state_dim ]))  # nb_samples, beam_size, state_dim
 
-    return output_label_id_list, prev_output_index_list, output_score_list
+    return K.pack(output_label_id_list), K.pack(prev_output_index_list), K.pack(output_score_list)
+
+def get_k_best_from_lattice(lattice, k = 1, eos = None):
+    lattice = [unpack(_) for _ in  lattice]
+    for l in lattice: l.reverse()
+    output_label_id_list, prev_output_index_list, output_score_list = lattice
+    path_score, output_indice = top_k (output_score_list[0], k)  # shape: nb_samples,k
+    # fill path and update path_score
+    path = []
+    for output_score, output_label_id, prev_output_index in zip(output_score_list, output_label_id_list, prev_output_index_list):
+        path.append (gather_by_sample(output_label_id, output_indice))  # shape: nb_samples,  k
+        current_score = gather_by_sample(output_score, output_indice)
+        if eos:
+            cond = K.equal(path[-1], eos)
+            path_score = choose_by_cond(cond, current_score, path_score)
+        output_indice = gather_by_sample(prev_output_index, output_indice)
+
+    if eos:
+        path_score, output_indice = top_k(path_score, k)
+        path = [gather_by_sample(path, output_indice) for path in path]
+
+    path = K.permute_dimensions(K.pack(path), (1, 2, 0))  # time_steps, nb_samples, k -> nb_samples, k, time_steps
+    return path, path_score
 
 def gather_by_sample(x, indices):
     '''Performs gather operation along the first dimension, i.e., ret[i] = gather( x[i], indices[i]).
@@ -120,26 +142,6 @@ def gather_by_sample(x, indices):
         y_i = K.gather(x_i, i)
         y_list.append(y_i)
     return K.pack(y_list)
-
-def get_k_best_from_lattice(lattice, k = 1, eos = None):
-    # from back to front
-    for _ in lattice:_.reverse()
-    output_label_id_list, prev_output_index_list, output_score_list = lattice
-
-    path_list = []
-    for output_score, output_label_id, prev_output_index in zip(output_score_list, output_label_id_list, prev_output_index_list):
-        _score, _indice = top_k (output_score, k)  # shape: nb_samples, k
-        path_list.append (gather_by_sample(output_label_id, output_indice))  # nb_sample, k
-        score = gather_by_sample(output_score, output_indice)
-        if eos:
-            cond = K.equal(path_list[-1], eos)
-            path_score = K.reshape(choose_by_cond(cond, score, path_score), shape = (-1, k))
-        output_indice = gather_by_sample(prev_output_index_list, output_indice)
-    if eos:
-        path_score, output_indice = top_k(path_score, k)  # sort the top k path by default, nb_samples, k
-        path_list = [gather_by_sample(path, output_indice) for path in path_list]
-    path_list = K.permute_dimensions(K.pack(path_list), (1, 2, 0))  # time_steps, nb_samples, k -> nb_samples, k, time_steps
-    return path_list, path_score
 
 def choose_by_cond(cond, _1, _2):
     '''Performs element wise choose from _1 or _2 based on condition cond. At a give position, if the element in cond is 1, select the element from _1 otherwise from _2 from the same position.

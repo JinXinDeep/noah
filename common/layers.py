@@ -6,7 +6,7 @@ Created on Jul 16, 2016
 
 from keras import backend as K
 from keras.engine import Layer
-from .backend import reshape, reverse, inner_product, unpack, top_k, beam_search, choose_by_cond
+from .backend import reshape, reverse, inner_product, unpack, beam_search
 from .utils import check_and_throw_if_fail
 from keras.layers import Dense, BatchNormalization
 from keras.layers.wrappers import TimeDistributed
@@ -504,25 +504,12 @@ def RNNDecoderLayerBase(ComposedLayer):
         # Since self._layers is set to empty in parent's constructor, we must put the following line after the calling of the parent's constructor
         self._layers = [self.rnn_cell, self.attention, self.mlp_classifier, self.embedding]
 
-
-    def get_initial_states(self, x):
-        # build an all-zero tensor of get_shape (samples, output_dim)
-        initial_state = K.zeros_like(x)  # shape of x: (nb_samples, time_steps)
-        initial_state = K.sum(initial_state, axis = (1,))  # (samples,)
-        initial_state = K.expand_dims(initial_state)  # (samples, 1)
-        initial_state = K.tile(initial_state, [1, self.output_dim])  # (samples, output_dim)
-        initial_states = [initial_state for _ in range(len(self.states))]
-        return initial_states
-
-    def get_output_shape_for(self, input_shape):
-        raise NotImplementedError
-
-    def step(self, x, states, source_context):
-        h_prev = states[0]  # previous output
+    def step(self, x, state, source_context):
+        h_prev = state  # previous output
         c = self.attention(h_prev, source_context)
         h = self.rnn_cell([x, c, h_prev])
         output = self.mlp_classifier(h)
-        return output, [h]
+        return output, h
 
     def get_config(self):
         config = {'rnn_cell': {'class_name': self.rnn_cell.__class__.__name__,
@@ -535,7 +522,7 @@ def RNNDecoderLayerBase(ComposedLayer):
                             'attention': self.mlp_classifier.get_config()},
                   'stateful': self.stateful
                   }
-        base_config = super(ComposedLayer, self).get_config()
+        base_config = super(RNNDecoderLayerBase, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
     @classmethod
@@ -551,8 +538,6 @@ def RNNDecoderLayerBase(ComposedLayer):
     def build(self, input_shapes):
         raise NotImplementedError
 
-    def call(self, inputs, mask = None):
-        raise NotImplementedError
 
 def RNNDecoderLayer(RNNDecoderLayerBase):
     '''Defines a RNN based decoder for training, using the ground truth output
@@ -565,92 +550,69 @@ def RNNDecoderLayer(RNNDecoderLayerBase):
         input_shape, _ = input_shapes
         if self.stateful:
             check_and_throw_if_fail(not input_shape[0] , 'If a RNN is stateful, a complete  input_shape must be provided (including batch size).')
-            self.states = [K.zeros((input_shape[0], self.rnn_cell.output_dim))]
+            self.state = K.zeros((input_shape[0], self.rnn_cell.output_dim))
         else:
             # initial states: all-zero tensor of get_shape (output_dim)
-            self.states = [None]
+            self.state = None
 
     def call(self, inputs, mask = None):
-        # input get_shape: (nb_samples, time (padded with zeros))
-        x, source_context = inputs
+
+        input_x, context = inputs
         if self.stateful:
-            current_states = self.states
+            current_state = self.states
         else:
-            current_states = self.get_initial_states(x)
-        x = self.embedding(x)
-        x = K.permute_dimensions(x, axes = [1, 0, 2])
-        input_list = unpack(x)
-        successive_states = []
-        successive_outputs = []
-        for current_input in input_list:
-            # TODO: randomly use the real greedy output as the next input
-            output, current_states = self.step(current_input, current_states, source_context)
-            successive_outputs.append(output)
-            successive_states.append(current_states)
-        outputs = K.pack(successive_outputs)
-        outputs = K.permute_dimensions(outputs, axes = [1, 0, 2])
-        new_states = successive_states[-1]
+            current_state = K.zeros(shape = K.pack([K.shape(input_x)[0], self.rnn_cell.output_dim]))
+
+        input_x = self.embedding(input_x)
+        input_x = K.permute_dimensions(input_x, axes = [1, 0, 2])  # shape: time_steps, batch-size, input_dim
+        input_x_list = unpack(input_x)
+        successive_state_list = []
+        successive_output_list = []
+        for current_input in input_x_list:
+            # TODO: randomly use the real greedy output as the next input_x
+            output, current_state = self.step(current_input, current_state, context)
+            successive_output_list.append(output)
+            successive_state_list.append(current_state)
+        output_sequence = K.pack(successive_output_list)
+        output_sequence = K.permute_dimensions(output_sequence, axes = [1, 0, 2])
+        new_state = successive_state_list[-1]
+
         if self.stateful:
+            # Warning: self.state is shared by all calls on this layer
             self.updates = []
-            for i in range(len(new_states)):
-                self.updates.append((self.states[i], new_states[i]))
-        return outputs
+            self.updates.append((self.state, new_state))
+        return output_sequence
 
 
 def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
     '''Defines a RNN based decoder for prediction, using beam search.
     '''
-    def __init__(self, max_output_length, beam_size, number_of_output_sequence = 1, eos = None, **kwargs):
-        check_and_throw_if_fail(max_output_length > 0, "check_and_throw_if_fail")
+    def __init__(self, max_output_length, beam_size, **kwargs):
+        check_and_throw_if_fail(max_output_length > 0, "max_output_length")
         check_and_throw_if_fail(beam_size > 0, "beam_size")
-        check_and_throw_if_fail(number_of_output_sequence > 0, "number_of_output_sequence")
-        check_and_throw_if_fail(beam_size >= number_of_output_sequence, "number_of_output_sequence")
         self.max_output_length = max_output_length
         self.beam_size = beam_size
-        self.number_of_output_sequence = number_of_output_sequence
-        self.eos = None
         super(RNNDecoderLayerWithBeamSearch, self).__init__(**kwargs)
 
     def get_output_shape_for(self, input_shape):
-        # two outputs: sequence and score
-        return (input_shape[0], self.number_of_output_sequence, self.max_output_length), (input_shape[0], self.number_of_output_sequence)
-
-    def build(self, input_shapes):
-        check_and_throw_if_fail(self.stateful == False, "stateful")
-        input_shape = input_shapes[-1]
-        check_and_throw_if_fail(len(input_shape) == 2, "input_shape=(nb_samples, source_context_input_dim")
-        self.states = [None]
+        # output three tensors: output_label_id_list, prev_output_index_list and output_score_list
+        nb_samples = input_shape[0]
+        return (self.max_output_length, nb_samples, self.beam_size), \
+               (self.max_output_length, nb_samples, self.beam_size), \
+               (self.max_output_length, nb_samples, self.beam_size)
 
     def call(self, inputs, mask = None):
         initial_input, source_context = inputs
         if K.ndim(initial_input) == 2:
             initial_input = K.squeeze(initial_input, 1)
-        initial_state = K.zeros(shape = K.pack([K.shape(initial_input)[0], self.output_dim]))  # (samples, timesteps, input_dim)
-        def _step_func(current_input, current_state, constant_context):
-            _step_score, _states = self.step(current_input, [current_state], constant_context)
-            return _step_score, _states[0]
-        lattice = beam_search(initial_input, initial_state, source_context, self.embedding,
-                                         step_func = _step_func, beam_size = self.beam_size, max_length = self.max_output_length)
+        initial_state = K.zeros(shape = K.pack([K.shape(initial_input)[0], self.rnn_cell.output_dim]))  # (nb_samples, rnn_cell_output_dim)
+        return  beam_search(initial_input, initial_state, source_context, self.embedding,
+                                         step_func = lambda current_input, current_state, constant_context: self.step(current_input, current_state, constant_context),
+                                         beam_size = self.beam_size, max_length = self.max_output_length)
 
-       return RNNDecoderLayerWithBeamSearch.get_k_best_from_lattice(lattice, self.number_of_output_sequence, eos)
-
-    @staticmethod
-    def get_k_best_from_lattice(lattice, k, eos):
-        # from back to front
-        for l in lattice:
-            l.reverse()
-        output_label_id_list, prev_output_index_list, output_score_list = lattice
-        path_list = []
-        path_score, output_indice = top_k (output_score_list[0], k)
-        for output_score, output_label_id, prev_output_index in zip(output_score_list, output_label_id_list, prev_output_index_list):
-            path_list.append (gather_by_sample(output_label_id, output_indice))  # nb_sample, k
-            score = gather_by_sample(output_score, output_indice)
-            if eos:
-                cond = K.equal(path_list[-1], eos)
-                path_score = K.reshape(choose_by_cond(cond, score, path_score), shape = (-1, k))
-            output_indice = gather_by_sample(prev_output_index_list, output_indice)
-        if eos:
-            path_score, output_indice = top_k(path_score, k)  # sort the top k path by default, nb_samples, k
-            path_list = [gather_by_sample(path, output_indice) for path in path_list]
-        path_list = K.permute_dimensions(K.pack(path_list), (1, 2, 0))  # time_steps, nb_samples, k -> nb_samples, k, time_steps
-        return path_list, path_score
+    def get_config(self):
+        config = {'max_output_length': self.max_output_length,
+                  'beam_size': self.beam_size,
+                  }
+        base_config = super(RNNDecoderLayerWithBeamSearch, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
