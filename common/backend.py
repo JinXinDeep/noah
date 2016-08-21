@@ -101,6 +101,26 @@ def beam_search(initial_input, initial_state, constant_context, embedding, step_
 
     return output_label_id_list, prev_output_index_list, output_score_list
 
+def gather_by_sample(x, indices):
+    '''Performs gather operation along the first dimension, i.e., ret[i] = gather( x[i], indices[i]).
+    For example, when x is a matrix, and indices is a vector, it selects one element for each row from x.
+    Note that this is different from gather, which selects |indices| ndim-1 sub tensors (i.e., x[i], where i = indices[:::]) from x
+
+    # Parameters
+    ----------
+    x : a tensor with a shape nb_samples, ...; its number of dimensions >= 2
+    indices : a tensor of type int with a shape nb_sample,...; its number of dimensions <= # of dimensions of x - 1
+
+    # Returns
+    ------
+    a tensor with the shape of nb_samples, ..., where ret[i,:::,:::]= x[i,indices[i,:::],:::]; and its number of dimensions = # dimensions of x + # dimension of indices - 2
+    '''
+    y_list = []
+    for x_i , i in zip(unpack(x), unpack(indices)):
+        y_i = K.gather(x_i, i)
+        y_list.append(y_i)
+    return K.pack(y_list)
+
 def get_k_best_from_lattice(lattice, k = 1, eos = None):
     # from back to front
     for _ in lattice:_.reverse()
