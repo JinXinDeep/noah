@@ -556,7 +556,6 @@ def RNNDecoderLayer(RNNDecoderLayerBase):
             self.state = None
 
     def call(self, inputs, mask = None):
-
         input_x, context = inputs
         if self.stateful:
             current_state = self.states

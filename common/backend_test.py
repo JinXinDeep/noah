@@ -4,13 +4,12 @@ Created on Aug 4, 2016
 @author: lxh5147
 '''
 import unittest
-from backend import get_shape, get_time_step_length_without_padding, unpack, gather_by_sample, reverse, reshape, inner_product, top_k, choose_by_cond
+from backend import get_shape, get_time_step_length_without_padding, unpack, gather_by_sample, reverse, reshape, inner_product, top_k, choose_by_cond, _beam_search_one_step
 from keras.layers import Input
 import keras.backend as K
 import numpy as np
-
+from keras.layers import Embedding
 class BackendTest(unittest.TestCase):
-
 
     def test_get_shape(self):
         # Input is a keras tensor
@@ -118,7 +117,51 @@ class BackendTest(unittest.TestCase):
         f = K.function(inputs = [x, indices], outputs = [x_selected])
         x_selected_val = f ([[[[1, 2], [3, 4]], [[5, 6], [7, 8]]], [0, 1]])[0]
         self.assertTrue(np.array_equal(x_selected_val, [[1, 2], [7, 8]]), "x_selected_val")
+'''
+    def test_beam_search_one_step(self):
+        # _step_score, _state, output_score, number_of_samples, beam_size, state_dim, output_score_list, prev_output_index_list, output_label_id_list, embedding
+        nb_samples = 2
+        beam_size = 3
+        state_dim = 2
+        output_dim = 4
+        embedding_dim = 2
 
+        _step_score = K.placeholder(shape = (nb_samples * beam_size, output_dim))
+        _state = K.placeholder(shape = (nb_samples * beam_size, state_dim))
+        output_score = K.placeholder(shape = (nb_samples * beam_size,))
+        embedding = Embedding(output_dim, embedding_dim, weights = [np.array([[0.0, 0.0], [0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])])
+        output_score_list = []
+        prev_output_index_list = []
+        output_label_id_list = []
+        _tensors_to_debug = []
+        updated_output_score, current_input, current_state = _beam_search_one_step(_step_score, _state, output_score, nb_samples, beam_size, state_dim, output_score_list, prev_output_index_list, output_label_id_list, embedding, _tensors_to_debug)
+        f = K.function(inputs = [_step_score, _state, output_score], outputs = [output_score_list[-1], prev_output_index_list[-1], output_label_id_list[-1], updated_output_score, current_input, current_state] + _tensors_to_debug)
+        _step_score_val = [ [0.1, 0.2, 0.3, 0.4],
+                            [0.2, 0.1, 0.4, 0.3],
+                            [0.3, 0.1, 0.2, 0.4],  # 1st sample
+                            [0.1, 0.15, 0.25, 0.5],
+                            [0.15, 0.1, 0.25, 0.5],
+                            [0.25, 0.15, 0.5, 0.1],  # 2nd sample
+                           ]  # 2*3,4
+        _state_val = [[0.1, 0.2], [0.2, 0.3], [0.3, 0.4],  # 1st sample
+                  [0.5, 0.6], [0.6, 0.7], [0.7, 0.8],  # 2nd sample
+                           ]  # 2*3,2
+        output_score_val = [-0.01, -0.02, -0.03, -0.015, -0.025, -0.035 ]  # 2*3
+
+        current_output_score_val, prev_output_index_val, current_output_label_id_val, updated_output_score_val, current_input_val, current_state_val, _score_val, _top_score_val, _top_indice_val = f([_step_score_val, _state_val, output_score_val])
+        # _score_val: nb_samples, beam_size*output_dim
+        _score_val_ref = np.reshape(np.expand_dims(output_score_val, 1) + np.log (_step_score_val), (nb_samples , beam_size * output_dim))
+        self.assertTrue(np.sum(np.abs(_score_val - _score_val_ref)) < 0.001, '_score_val')
+        # _top_score_val_ref = np.
+        print(_top_score_val)
+        print(_top_indice_val)
+        print(prev_output_index_val)
+        print(current_output_label_id_val)
+        print(current_input_val)
+        print(current_state_val)
+        print(current_output_score_val)
+        print(updated_output_score_val)
+'''
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
     unittest.main()

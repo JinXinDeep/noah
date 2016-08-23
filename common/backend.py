@@ -65,6 +65,36 @@ def inner_product(x, y):
     output = K.squeeze(output, -1)
     return output
 
+def _beam_search_one_step(_step_score, _state, output_score, number_of_samples, beam_size, state_dim, output_score_list, prev_output_index_list, output_label_id_list, embedding, _tensors_to_debug = None):
+    number_of_samples = K.shape(_step_score)[0] / beam_size
+    output_dim = K.shape(_step_score)[1]  # nb_samples*beam_size, output_dim
+    # accumulate score
+    _score = K.expand_dims(output_score) + K.log(_step_score)  # nb_samples*beam_size, output_dim
+    # select top output labels for each sample
+    _score = K.reshape(_score, shape = K.pack([number_of_samples, beam_size * output_dim ]))  # nb_samples, beam_size* output_dim
+    _top_score , _top_indice = top_k (_score, beam_size)  # -1, beam_size
+    # update accumulated output score
+    output_score_list.append (_top_score)
+    output_score = K.reshape(_top_score, shape = (-1,))  # nb_samples * beam_size
+
+    # update output label and previous output index
+    # _top_indice = beam_id * output_dim + output_label_id
+    prev_output_index = _top_indice // output_dim
+    prev_output_index_list.append(prev_output_index)
+    output_label_id = _top_indice % output_dim
+    output_label_id_list.append (output_label_id)
+    # update current input and current_state
+    current_input = embedding (K.reshape(output_label_id, shape = (-1,)))  # nb_samples* beam_siz, input_dim
+    # _state : nb_samples*beam_size, state_dim
+    # first reshape _state to nb_samples, beam_size, state_dim
+    # then gather by sample to get a tensor with the shape: nb_samples, beam_size, state_dim
+    # finally reshape to nb_samples*beam_size, state_dim
+    # note that prev_output_index has a shape of -1, beam_size, so should be reshape to nb_samples, beam_size before calling gather_by_sample
+    current_state = K.reshape (gather_by_sample(K.reshape(_state, shape = K.pack([number_of_samples , beam_size , state_dim ])), K.reshape(prev_output_index, shape = K.pack([number_of_samples, beam_size]))), shape = K.pack([number_of_samples * beam_size , state_dim ]))
+    if _tensors_to_debug is not None:
+        _tensors_to_debug += [_score, _top_score, _top_indice]
+    return output_score, current_input, current_state
+
 def beam_search(initial_input, initial_state, constant_context, embedding, step_func, beam_size = 1, max_length = 20):
     number_of_samples = K.shape(initial_input)[0]
     state_dim = K.shape(initial_state)[-1]
@@ -76,28 +106,9 @@ def beam_search(initial_input, initial_state, constant_context, embedding, step_
     output_label_id_list = []
     prev_output_index_list = []  # the index of candidate from which current label id is generated
 
-    # TODO: support the case that max_length is a scalar tensor
     for _ in xrange(max_length):
         _step_score, _state = step_func(current_input, current_state, constant_context)  # nb_samples*beam_size , output_dim
-        output_dim = K.shape(_step_score)[-1]
-        # accumulate score
-        _score = K.expand_dims(output_score) + K.log(_step_score)  # nb_samples*beam_size, output_dim
-        # select top output labels for each sample
-        _score = K.reshape(_score, shape = K.pack([number_of_samples, beam_size * output_dim ]))  # nb_samples, beam_size* output_dim
-        _top_score , _top_indice = top_k (_score, beam_size)  # nb_samples, beam_size
-        # update accumulated output score
-        output_score_list.append (_top_score)
-        output_score = K.reshape(_top_score, shape = (-1,))  # nb_samples * beam_size
-        # update output label and previous output index
-        # _top_indice = beam_id * output_dim + output_label_id
-        prev_output_index = _top_indice // output_dim
-        prev_output_index_list.append(prev_output_index)
-        output_label_id = _top_indice % output_dim
-        output_label_id_list.append (output_label_id)
-        # update current input and current_state
-        current_input = embedding (K.reshape(output_label_id, shape = (-1,)))  # nb_samples* beam_siz, input_dim
-        # _state : nb_samples*beam_size, state_dim
-        current_state = K.reshape (K.gather(_state, prev_output_index), shape = K.pack([number_of_samples * beam_size , state_dim ]))  # nb_samples, beam_size, state_dim
+        output_score, current_input, current_state = _beam_search_one_step(_step_score, _state, output_score, number_of_samples, beam_size, state_dim, output_score_list, prev_output_index_list, output_label_id_list, embedding)
 
     return K.pack(output_label_id_list), K.pack(prev_output_index_list), K.pack(output_score_list)
 
@@ -322,6 +333,7 @@ elif K._BACKEND == 'tensorflow':
         ------
         a list of tensors sliced by the first dimension of the input tensor
         '''
+        # enhanced version
         return tf.unpack(x, num = num)
 
     def reverse(x, num = None):
