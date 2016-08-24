@@ -129,7 +129,8 @@ class BackendTest(unittest.TestCase):
         _step_score = K.placeholder(shape = (nb_samples * beam_size, output_dim))
         _state = K.placeholder(shape = (nb_samples * beam_size, state_dim))
         output_score = K.placeholder(shape = (nb_samples * beam_size,))
-        embedding = Embedding(output_dim, embedding_dim, weights = [np.array([[0.0, 0.0], [0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])])
+        embedding_weights = np.array([[0.0, 0.0], [0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])
+        embedding = Embedding(output_dim, embedding_dim, weights = [embedding_weights])
         output_score_list = []
         prev_output_index_list = []
         output_label_id_list = []
@@ -152,25 +153,29 @@ class BackendTest(unittest.TestCase):
         # _score_val: nb_samples, beam_size*output_dim
         _score_val_ref = np.reshape(np.expand_dims(output_score_val, 1) + np.log (_step_score_val), (nb_samples , beam_size * output_dim))
         self.assertTrue(np.sum(np.abs(_score_val - _score_val_ref)) < 0.001, '_score_val')
-        # _top_score_val_ref = np.
-        print(_score_val)
+
         sort_indices = np.argsort(_score_val, axis = 1)
         _top_indice_val_ref = sort_indices[:, -1:-beam_size - 1:-1]
         self.assertTrue(np.array_equal(_top_indice_val, _top_indice_val_ref), "_top_indice_val")
+
         prev_output_index_val_ref = _top_indice_val_ref // output_dim
         self.assertTrue(np.array_equal(prev_output_index_val, prev_output_index_val_ref), "prev_output_index_val")
-        current_output_label_id_val_ref = _top_indice_val_ref % output_dim  # this assume that output dim is greater than beam_size
+        current_output_label_id_val_ref = _top_indice_val_ref - prev_output_index_val_ref * output_dim  # this assume that output dim is greater than beam_size
         self.assertTrue(np.array_equal(current_output_label_id_val, current_output_label_id_val_ref), "prev_output_index_val")
+
         _score_val_sorted = np.sort(_score_val, axis = 1)
         _top_score_val_ref = _score_val_sorted[:, -1:-beam_size - 1:-1]
         self.assertTrue(np.sum(np.abs(_top_score_val - _top_score_val_ref)) < 0.001, '_top_score_val')
 
-        print(prev_output_index_val)
-        print(current_output_label_id_val)
-        print(current_input_val)
-        print(current_state_val)
-        print(current_output_score_val)
-        print(updated_output_score_val)
+        current_input_val_ref = embedding_weights[np.reshape(current_output_label_id_val, newshape = (-1,))]
+        self.assertTrue(np.sum(np.abs(current_input_val - current_input_val_ref)) < 0.001, "current_input_val")
+
+        self.assertTrue(np.sum(np.abs(current_output_score_val - _top_score_val)) < 0.001, "current_output_score_val")
+
+        self.assertTrue(np.sum(np.abs(updated_output_score_val - np.reshape(_top_score_val, (-1,)))) < 0.001, "updated_output_score_val")
+
+        current_state_val_ref = [ _state_val[i * beam_size + prev_output_index_val[i, j]] for i in range(nb_samples)  for j in range(beam_size)  ]
+        self.assertTrue(np.sum(np.abs(current_state_val - np.array(current_state_val_ref))) < 0.001, "updated_output_score_val")
 
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
