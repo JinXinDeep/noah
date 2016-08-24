@@ -121,12 +121,12 @@ def get_k_best_from_lattice(lattice, k = 1, eos = None):
     for output_score, output_label_id, prev_output_index in zip(output_score_list, output_label_id_list, prev_output_index_list):
         path.append (gather_by_sample(output_label_id, output_indice))  # shape: nb_samples,  k
         current_score = gather_by_sample(output_score, output_indice)
-        if eos:
+        if eos is not None:
             cond = K.equal(path[-1], eos)
             path_score = choose_by_cond(cond, current_score, path_score)
         output_indice = gather_by_sample(prev_output_index, output_indice)
 
-    if eos:
+    if eos is not None:
         path_score, output_indice = top_k(path_score, k)
         path = [gather_by_sample(path, output_indice) for path in path]
 

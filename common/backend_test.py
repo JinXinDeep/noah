@@ -4,7 +4,7 @@ Created on Aug 4, 2016
 @author: lxh5147
 '''
 import unittest
-from backend import get_shape, get_time_step_length_without_padding, unpack, gather_by_sample, reverse, reshape, inner_product, top_k, choose_by_cond, _beam_search_one_step
+from backend import get_shape, get_time_step_length_without_padding, get_k_best_from_lattice, unpack, gather_by_sample, reverse, reshape, inner_product, top_k, choose_by_cond, _beam_search_one_step
 from keras.layers import Input
 import keras.backend as K
 import numpy as np
@@ -177,6 +177,21 @@ class BackendTest(unittest.TestCase):
         current_state_val_ref = [ _state_val[i * beam_size + prev_output_index_val[i, j]] for i in range(nb_samples)  for j in range(beam_size)  ]
         self.assertTrue(np.sum(np.abs(current_state_val - np.array(current_state_val_ref))) < 0.001, "updated_output_score_val")
 
+    def test_get_k_best_from_lattice(self):
+        nb_samples = 2
+        beam_size = 3
+        output_dim = 4
+        time_steps = 2
+        output_label_id_list = [K.placeholder(shape = (nb_samples, beam_size), dtype = 'int32') for _ in range(time_steps)]
+        prev_output_index_list = [K.placeholder(shape = (nb_samples, beam_size), dtype = 'int32') for _ in range(time_steps)]
+        output_score_list = [K.placeholder(shape = (nb_samples, beam_size)) for _ in range(time_steps)]
+        lattice = (K.pack(output_label_id_list), K.pack(prev_output_index_list), K.pack(output_score_list))
+        path, path_score = get_k_best_from_lattice(lattice, k = 2, eos = -1)
+        f = K.function(inputs = output_label_id_list + prev_output_index_list + output_score_list, outputs = [path, path_score])
+        output_label_id_list_val = [[[3, 2, 1], [1, 3, -1]] , [[2, 1, 3], [3, -1, -1]]]
+        prev_output_index_list_val = [[[0, 0, 0], [0, 0, 0]] , [[0, 1, 2], [2, 2, 1]]]
+        output_score_list_val = [[[-0.1, -0.2, -0.3], [-0.25, -0.36, -0.45]] , [[-0.6, -0.5, -0.7], [-0.9, -1.2, -0.75]]]
+        path_val = [[]]
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
     unittest.main()
