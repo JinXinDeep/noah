@@ -4,7 +4,7 @@ Created on Aug 4, 2016
 @author: lxh5147
 '''
 import unittest
-from backend import get_shape, get_time_step_length_without_padding, get_k_best_from_lattice, unpack, gather_by_sample, reverse, reshape, inner_product, top_k, choose_by_cond, _beam_search_one_step
+from .backend import get_shape, get_time_step_length_without_padding, get_k_best_from_lattice, unpack, gather_by_sample, reverse, reshape, inner_product, top_k, choose_by_cond, _beam_search_one_step
 from keras.layers import Input
 import keras.backend as K
 import numpy as np

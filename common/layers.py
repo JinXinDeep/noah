@@ -6,7 +6,7 @@ Created on Jul 16, 2016
 
 from keras import backend as K
 from keras.engine import Layer
-from .backend import reshape, reverse, inner_product, unpack, beam_search
+from .backend import reverse, inner_product, unpack, beam_search
 from .utils import check_and_throw_if_fail
 from keras.layers import Dense, BatchNormalization
 from keras.layers.wrappers import TimeDistributed
@@ -146,30 +146,6 @@ class ComposedLayer(Layer):
         for layer in self._layers:
             weights += layer.non_trainable_weights
         return weights
-
-class ReshapeLayer(Layer):
-    '''Reshape a tensor to the target shape
-    '''
-
-    def __init__(self, target_shape, **kwargs):
-        """Constructs a reshape layer
-        # Parameters
-        ----------
-        target_shape : A tuple of int type, representing the target shape of the output tensor.
-        """
-        self.target_shape = tuple(target_shape)
-        super(ReshapeLayer, self).__init__(**kwargs)
-
-    def call(self, x, mask = None):
-        return reshape(x, self.target_shape)
-
-    def get_output_shape_for(self, input_shape):
-        return self.target_shape
-
-    def get_config(self):
-        config = {'target_shape': self.target_shape}
-        base_config = super(ReshapeLayer, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
 
 class BiDirectionalLayer(Layer):
     '''Defines a layer that combines one input sequence from left to right and the other sequence from right to left.
