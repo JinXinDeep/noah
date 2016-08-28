@@ -60,7 +60,7 @@ def inner_product(x, y):
     '''
     x = K.expand_dims(x, -2)  # ..., 1, vector_dim
     y = K.expand_dims(y)  # vector_dim,1
-    output = K.dot(x, y)  # ..., 1*1
+    output = dot(x, y)  # ..., 1*1
     output = K.squeeze(output, -1)
     output = K.squeeze(output, -1)
     return output
@@ -220,6 +220,7 @@ if K._BACKEND == 'theano':
         the reversed tensor with the same shape of the input
         '''
         return x[::-1]
+
     def top_k(x, k = 1):
         """Finds values and indices of the `k` largest entries for the last dimension sorted by value in descent.
 
@@ -263,78 +264,6 @@ if K._BACKEND == 'theano':
             x_sort_arg = T.reshape(x_sort_arg, new_shape, ndim = ndim)
             return x_sorted, x_sort_arg
 
-    def reshape(x, shape, ndim = None):
-        """Reshapes a tensor.
-
-          Given `tensor`, this operation returns a tensor that has the same values
-          as `tensor` with shape `shape`.
-
-          If one component of `shape` is the special value -1, the size of that dimension
-          is computed so that the total size remains constant.  In particular, a `shape`
-          of `[-1]` flattens into 1-D.  At most one component of `shape` can be -1.
-
-          If `shape` is 1-D or higher, then the operation returns a tensor with shape
-          `shape` filled with the values of `tensor`. In this case, the number of elements
-          implied by `shape` must be the same as the number of elements in `tensor`.
-
-          For example:
-
-          ```prettyprint
-          # tensor 't' is [1, 2, 3, 4, 5, 6, 7, 8, 9]
-          # tensor 't' has shape [9]
-          reshape(t, [3, 3]) ==> [[1, 2, 3],
-                                  [4, 5, 6],
-                                  [7, 8, 9]]
-
-          # tensor 't' is [[[1, 1], [2, 2]],
-          #                [[3, 3], [4, 4]]]
-          # tensor 't' has shape [2, 2, 2]
-          reshape(t, [2, 4]) ==> [[1, 1, 2, 2],
-                                  [3, 3, 4, 4]]
-
-          # tensor 't' is [[[1, 1, 1],
-          #                 [2, 2, 2]],
-          #                [[3, 3, 3],
-          #                 [4, 4, 4]],
-          #                [[5, 5, 5],
-          #                 [6, 6, 6]]]
-          # tensor 't' has shape [3, 2, 3]
-          # pass '[-1]' to flatten 't'
-          reshape(t, [-1]) ==> [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6]
-
-          # -1 can also be used to infer the shape
-
-          # -1 is inferred to be 9:
-          reshape(t, [2, -1]) ==> [[1, 1, 1, 2, 2, 2, 3, 3, 3],
-                                   [4, 4, 4, 5, 5, 5, 6, 6, 6]]
-          # -1 is inferred to be 2:
-          reshape(t, [-1, 9]) ==> [[1, 1, 1, 2, 2, 2, 3, 3, 3],
-                                   [4, 4, 4, 5, 5, 5, 6, 6, 6]]
-          # -1 is inferred to be 3:
-          reshape(t, [ 2, -1, 3]) ==> [[[1, 1, 1],
-                                        [2, 2, 2],
-                                        [3, 3, 3]],
-                                       [[4, 4, 4],
-                                        [5, 5, 5],
-                                        [6, 6, 6]]]
-
-          # tensor 't' is [7]
-          # shape `[]` reshapes to a scalar
-          reshape(t, []) ==> 7
-          ```
-
-        # Parameters
-        ----------
-        tensor: A `Tensor`.
-        shape: A `Tensor` of type `int32`. Defines the shape of the output tensor.
-        ndim: the length of the shape; if ndim = None, the length of the shape must be able to be inferred from shape
-
-        # Returns
-        ------
-            A `Tensor`. Has the same type as `tensor`.
-        """
-        return T.reshape(x, shape, ndim)
-
     def gather_by_sample(x, indices):
         '''Performs gather operation along the first dimension, i.e., ret[i] = gather( x[i], indices[i]).
         For example, when x is a matrix, and indices is a vector, it selects one element for each row from x.
@@ -354,6 +283,9 @@ if K._BACKEND == 'theano':
             y_i = K.gather(x_i, i)
             y_list.append(y_i)
         return K.pack(y_list)
+
+    def dot(x, y):
+        return T.dot(x, y)
 
 elif K._BACKEND == 'tensorflow':
     import tensorflow as tf
@@ -414,78 +346,6 @@ elif K._BACKEND == 'tensorflow':
         """
         return tf.nn.top_k(x, k)
 
-    def reshape(x, shape, ndim = None):
-        """Reshapes a tensor.
-
-          Given `tensor`, this operation returns a tensor that has the same values
-          as `tensor` with shape `shape`.
-
-          If one component of `shape` is the special value -1, the size of that dimension
-          is computed so that the total size remains constant.  In particular, a `shape`
-          of `[-1]` flattens into 1-D.  At most one component of `shape` can be -1.
-
-          If `shape` is 1-D or higher, then the operation returns a tensor with shape
-          `shape` filled with the values of `tensor`. In this case, the number of elements
-          implied by `shape` must be the same as the number of elements in `tensor`.
-
-          For example:
-
-          ```prettyprint
-          # tensor 't' is [1, 2, 3, 4, 5, 6, 7, 8, 9]
-          # tensor 't' has shape [9]
-          reshape(t, [3, 3]) ==> [[1, 2, 3],
-                                  [4, 5, 6],
-                                  [7, 8, 9]]
-
-          # tensor 't' is [[[1, 1], [2, 2]],
-          #                [[3, 3], [4, 4]]]
-          # tensor 't' has shape [2, 2, 2]
-          reshape(t, [2, 4]) ==> [[1, 1, 2, 2],
-                                  [3, 3, 4, 4]]
-
-          # tensor 't' is [[[1, 1, 1],
-          #                 [2, 2, 2]],
-          #                [[3, 3, 3],
-          #                 [4, 4, 4]],
-          #                [[5, 5, 5],
-          #                 [6, 6, 6]]]
-          # tensor 't' has shape [3, 2, 3]
-          # pass '[-1]' to flatten 't'
-          reshape(t, [-1]) ==> [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6]
-
-          # -1 can also be used to infer the shape
-
-          # -1 is inferred to be 9:
-          reshape(t, [2, -1]) ==> [[1, 1, 1, 2, 2, 2, 3, 3, 3],
-                                   [4, 4, 4, 5, 5, 5, 6, 6, 6]]
-          # -1 is inferred to be 2:
-          reshape(t, [-1, 9]) ==> [[1, 1, 1, 2, 2, 2, 3, 3, 3],
-                                   [4, 4, 4, 5, 5, 5, 6, 6, 6]]
-          # -1 is inferred to be 3:
-          reshape(t, [ 2, -1, 3]) ==> [[[1, 1, 1],
-                                        [2, 2, 2],
-                                        [3, 3, 3]],
-                                       [[4, 4, 4],
-                                        [5, 5, 5],
-                                        [6, 6, 6]]]
-
-          # tensor 't' is [7]
-          # shape `[]` reshapes to a scalar
-          reshape(t, []) ==> 7
-          ```
-
-        # Parameters
-        ----------
-        tensor: A `Tensor`.
-        shape: A `Tensor` of type `int32`. Defines the shape of the output tensor.
-        ndim : not used.
-
-        # Returns
-        ------
-            A `Tensor`. Has the same type as `tensor`.
-        """
-        return tf.reshape(x, shape)
-
     def gather_by_sample(x, indices):
         '''Performs gather operation along the first dimension, i.e., ret[i] = gather( x[i], indices[i]).
         For example, when x is a matrix, and indices is a vector, it selects one element for each row from x.
@@ -510,3 +370,24 @@ elif K._BACKEND == 'tensorflow':
             return K.gather(x_i, indices_i)
         return tf.scan(_step , elems, initializer = tf.zeros(shape = x_shape[1:], dtype = x.dtype))
 
+    # support None
+    def dot(x, y):
+        '''Multiplies 2 tensors.
+        When attempting to multiply a ND tensor
+        with a ND tensor, reproduces the Theano behavior
+        (e.g. (2, 3).(4, 3, 5) = (2, 4, 5))
+        '''
+        ndim_x = K.ndim(x)
+        ndim_y = K.ndim(y)
+
+        if ndim_x is not None and ndim_x > 2 or ndim_y > 2:
+            x_shape = tf.shape(x)
+            y_shape = tf.shape(y)
+            y_permute_dim = list(range(ndim_y))
+            y_permute_dim = [y_permute_dim.pop(-2)] + y_permute_dim
+            xt = tf.reshape(x, K.pack([-1, x_shape[ndim_x - 1]]))
+            yt = tf.reshape(tf.transpose(y, perm = y_permute_dim), K.pack([y_shape[ndim_y - 2], -1]))
+            target_shape = [x_shape[i] for i in range(ndim_x - 1)] + [y_shape[i] for i in range(ndim_y - 2)] + [y_shape[ndim_y - 1]]
+            return tf.reshape(tf.matmul(xt, yt), K.pack(target_shape))
+        out = tf.matmul(x, y)
+        return out

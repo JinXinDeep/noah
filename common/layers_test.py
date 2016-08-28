@@ -66,14 +66,13 @@ class LayersTest(unittest.TestCase):
         self.assertEqual(layer.get_config(), AttentionLayer.from_config(layer.get_config()).get_config(), "config")
 
         s = Input((3,))  # current state tensor
-        h = Input((2, 4))
+        h = Input((None, 4))  # context
         self.assertEqual(layer([s, h])._keras_shape, (None, 4), "_keras_shape")
 
         tensors_to_debug = []
         output = AttentionLayer._calc(s, h, K.variable(init_W_a), K.variable(init_U_a), K.variable(init_v_a) , tensors_to_debug)
-        # check keras shape
-        # self.assertEqual(output._keras_shape, (None, 4), "_keras_shape")
-        # check with call
+
+        # check with call to see detailed computation process
         f = K.function(inputs = [s, h ], outputs = [output] + tensors_to_debug)
         s_val = [[1, 2, 3], [4, 5, 6]]
         h_val = [[[1, 2, 3, 4], [5, 6, 7, 8]], [[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]]]

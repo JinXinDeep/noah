@@ -6,7 +6,7 @@ Created on Jul 16, 2016
 
 from keras import backend as K
 from keras.engine import Layer
-from .backend import reverse, inner_product, unpack, beam_search
+from .backend import reverse, inner_product, unpack, beam_search, dot
 from .utils import check_and_throw_if_fail
 from keras.layers import  BatchNormalization
 from keras.layers.wrappers import Wrapper
@@ -400,33 +400,41 @@ class AttentionLayer(Layer):
 
     @staticmethod
     def _calc(s, h, W_a, U_a, v_a, tensors_to_debug = None):
-        U_a_h = K.dot(h, U_a)  # nb_samples, time_steps, attention_context_dim
-        W_a_s = K.expand_dims(K.dot(s, W_a), 1)  # nb_samples, 1, attention_context_dim
+        U_a_h = dot(h, U_a)  # nb_samples, time_steps, attention_context_dim
+        W_a_s = K.expand_dims(dot(s, W_a), 1)  # nb_samples, 1, attention_context_dim
         if tensors_to_debug is not None:
             tensors_to_debug.append(W_a_s)
             tensors_to_debug.append(U_a_h)
+
         W_U_sum = W_a_s + U_a_h
         if tensors_to_debug is not None:
             tensors_to_debug.append(W_U_sum)
+
         e = K.tanh (W_U_sum)  # nb_samples, time_steps, attention_context_dim
         if tensors_to_debug is not None:
             tensors_to_debug.append(e)
+
         e = inner_product(e, v_a)  # nb_samples, time_steps
         if tensors_to_debug is not None:
             tensors_to_debug.append(e)
+
         e = K.exp (e)
         if tensors_to_debug is not None:
             tensors_to_debug.append(e)
+
         e_sum = K.sum(e, -1, keepdims = True)  # nb_samples, 1
         if tensors_to_debug is not None:
             tensors_to_debug.append(e_sum)
+
         a = e / e_sum  # nb_samples, time_steps
         if tensors_to_debug is not None:
             tensors_to_debug.append(a)
+
         a = K.expand_dims(a)  # nb_samples, time_steps, 1
         c = a * h  # nb_samples, time_steps, h_input_dim
         if tensors_to_debug is not None:
             tensors_to_debug.append(c)
+
         c = K.sum(c, axis = 1)  # nb_samples, h_input_dim
         return c
 

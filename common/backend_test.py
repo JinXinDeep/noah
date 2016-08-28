@@ -4,7 +4,7 @@ Created on Aug 4, 2016
 @author: lxh5147
 '''
 import unittest
-from backend import get_shape, get_time_step_length_without_padding, get_k_best_from_lattice, unpack, gather_by_sample, reverse, reshape, inner_product, top_k, choose_by_cond, _beam_search_one_step
+from backend import get_shape, get_time_step_length_without_padding, get_k_best_from_lattice, unpack, gather_by_sample, reverse, inner_product, top_k, choose_by_cond, _beam_search_one_step, dot
 from keras.layers import Input
 import keras.backend as K
 import numpy as np
@@ -18,7 +18,6 @@ class BackendTest(unittest.TestCase):
         # Input is a keras tensor
         x = Input((3,))
         self.assertEqual(get_shape(x), (None, 3), 'get_shape')
-        x = K.variable((None, 3))
         # Placeholder is keras tensor
         x = K.placeholder(shape = (None, 3), ndim = 2)
         self.assertEqual(get_shape(x), (None, 3), 'get_shape')
@@ -58,13 +57,16 @@ class BackendTest(unittest.TestCase):
         reversed_x_val = f([x_val])[0]
         self.assertTrue(np.array_equal(reversed_x_val, [ [4, 2, 2], [3, 2, 2]]), "reversed_x_val")
 
-    def test_reshape(self):
-        x = Input((4,))
-        y = reshape(x, shape = (-1, 2, 2))  # - means all the remaining
-        f = K.function(inputs = [x], outputs = [y])
-        x_val = [[3, 2, 2, 4], [4, 2, 2, 4]]
-        y_val = f([x_val])[0]
-        self.assertTrue(np.array_equal(y_val, [[ [3, 2], [2, 4]], [[4, 2], [2, 4]]]), "y_val")
+    def test_dot(self):
+        x = Input((None, 3))
+        y = K.placeholder((3, 2))
+        output = dot(x, y)
+        f = K.function(inputs = [x, y], outputs = [output])
+        x_val = [[[3, 2, 2], [4, 2, 2]], [[1, 2, 3], [4, 3, 1]]]
+        y_val = [[1, 2], [2, 3], [3, 4]]
+        output_val = f([x_val, y_val])[0]
+        output_val_ref = [[[ 13., 20.], [ 14., 22.]], [[ 14. , 20.], [ 13. , 21.]]]
+        self.assertTrue(np.sum(np.abs(output_val - output_val_ref)) < 0.001, 'output_val')
 
     def test_inner_product(self):
         x = K.placeholder(shape = (3,))
