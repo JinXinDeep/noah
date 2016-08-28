@@ -9,6 +9,9 @@ from keras.layers import Input
 import keras.backend as K
 import numpy as np
 from keras.layers import Embedding
+
+np.random.seed(20080524)
+
 class BackendTest(unittest.TestCase):
 
     def test_get_shape(self):

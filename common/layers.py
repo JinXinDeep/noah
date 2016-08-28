@@ -9,10 +9,97 @@ from keras.engine import Layer
 from .backend import reverse, inner_product, unpack, beam_search
 from .utils import check_and_throw_if_fail
 from keras.layers import Dense, BatchNormalization
-from keras.layers.wrappers import TimeDistributed
+from keras.layers.wrappers import Wrapper
+from keras.engine import InputSpec
 
 from keras import activations, initializations, regularizers, constraints
 import numpy as np
+#================================start of overridden layers========================================#
+# Copied from keras 1.0.8 and made small adpation so that we can set time steps can be None
+class TimeDistributed(Wrapper):
+    """This wrapper allows to apply a layer to every
+    temporal slice of an input.
+
+    The input should be at least 3D,
+    and the dimension of index one will be considered to be
+    the temporal dimension.
+
+    Consider a batch of 32 samples, where each sample is a sequence of 10
+    vectors of 16 dimensions. The batch input shape of the layer is then `(32, 10, 16)`
+    (and the `input_shape`, not including the samples dimension, is `(10, 16)`).
+
+    You can then use `TimeDistributed` to apply a `Dense` layer to each of the 10 timesteps, independently:
+    ```python
+        # as the first layer in a model
+        model = Sequential()
+        model.add(TimeDistributed(Dense(8), input_shape=(10, 16)))
+        # now model.output_shape == (None, 10, 8)
+
+        # subsequent layers: no need for input_shape
+        model.add(TimeDistributed(Dense(32)))
+        # now model.output_shape == (None, 10, 32)
+    ```
+
+    The output will then have shape `(32, 10, 8)`.
+
+    Note this is strictly equivalent to using `layers.core.TimeDistributedDense`.
+    However what is different about `TimeDistributed`
+    is that it can be used with arbitrary layers, not just `Dense`,
+    for instance with a `Convolution2D` layer:
+
+    ```python
+        model = Sequential()
+        model.add(TimeDistributed(Convolution2D(64, 3, 3), input_shape=(10, 3, 299, 299)))
+    ```
+
+    # Arguments
+        layer: a layer instance.
+    """
+    def __init__(self, layer, **kwargs):
+        self.supports_masking = True
+        super(TimeDistributed, self).__init__(layer, **kwargs)
+
+    def build(self, input_shape):
+        assert len(input_shape) >= 3
+        self.input_spec = [InputSpec(shape = input_shape)]
+        child_input_shape = (input_shape[0],) + input_shape[2:]
+        if not self.layer.built:
+            self.layer.build(child_input_shape)
+            self.layer.built = True
+        super(TimeDistributed, self).build()
+
+    def get_output_shape_for(self, input_shape):
+        child_input_shape = (input_shape[0],) + input_shape[2:]
+        child_output_shape = self.layer.get_output_shape_for(child_input_shape)
+        timesteps = input_shape[1]
+        return (child_output_shape[0], timesteps) + child_output_shape[1:]
+
+    def call(self, X, mask = None):
+        input_shape = self.input_spec[0].shape
+        if input_shape[0]:
+            # batch size matters, use rnn-based implementation
+            def step(x, states):
+                output = self.layer.call(x)
+                return output, []
+
+            _, outputs, _ = K.rnn(step, X,
+                                                 initial_states = [])
+            y = outputs
+        else:
+            # no batch size specified, therefore the layer will be able
+            # to process batches of any size
+            # we can go with reshape-based implementation for performance
+            input_length = input_shape[1]
+            if not input_length:
+                input_length = K.shape(X)[1]
+            X = K.reshape(X, (-1,) + input_shape[2:])  # (nb_samples * timesteps, ...)
+            y = self.layer.call(X)  # (nb_samples * timesteps, ...)
+            # (nb_samples, timesteps, ...)
+            output_shape = self.get_output_shape_for(input_shape)
+            y = K.reshape(y, (-1, input_length) + output_shape[2:])
+        return y
+
+#================================end of overridden layers========================================#
 
 class ComposedLayer(Layer):
     '''A layer that employs a set of children layers to complete its call. All the children layers must be created in its constructor.
@@ -184,8 +271,8 @@ class MLPClassifierLayer(ComposedLayer):
     '''
     Represents a mlp classifier, which consists of several hidden layers followed by a softmax/or sigmoid output layer.
     '''
-
-    def __init__(self, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
+    # TODO: add regularization
+    def __init__(self, hidden_layers, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
                  output_activation_function = 'softmax', use_sequence_input = True, **kwargs):
         '''
         # Parameters
@@ -195,7 +282,7 @@ class MLPClassifierLayer(ComposedLayer):
         hidden_unit_numbers: the number of hidden units of each hidden layer.
         hidden_unit_activation_functions: the activation function of each hidden layers.
         output_activation_function: activation function for classification, use 'sigmoid' for binary classification.
-        use_sequence_input: the last two dimensions of the input has a shape of time_steps, input_dim
+        use_sequence_input: the last two dimensions of the input has a shape of time_steps, input_dim, and the time_steps must be specified (required by unpack)
         '''
         check_and_throw_if_fail(output_dim > 0, "output_dim")
         check_and_throw_if_fail(len(hidden_unit_numbers) == len(hidden_unit_activation_functions), "hidden_unit_numbers")

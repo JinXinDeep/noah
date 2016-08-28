@@ -383,13 +383,10 @@ elif K._BACKEND == 'tensorflow':
         ------
         the reversed tensor with the same shape of the input
         '''
-        x_shape = K.shape(x)
-        nb_samples = x_shape[0]
-        ones = tf.ones(shape = K.pack([nb_samples]), dtype = 'int32')
-        elems = tf.scan(lambda prev, one: prev - one , ones, initializer = nb_samples)
-        return tf.scan(lambda prev, i: K.gather(x, i), elems, initializer = tf.zeros(shape = x_shape[1:], dtype = x.dtype))
+        ndim = K.ndim(x)
+        dims = [True] + [False for _ in range(1, ndim)]
+        return tf.reverse(x, dims)
 
-    # Finds values and indices of the k largest entries for the last dimension.
     def top_k(x, k = 1, sorted_by_value_descent = True):
         """Finds values and indices of the `k` largest entries for the last dimension.
 
