@@ -478,6 +478,21 @@ def RNNDecoderLayerBase(ComposedLayer):
         output = self.mlp_classifier(h)
         return output, [h]
 
+    def build(self, input_shapes):
+        # build the rnn_cell manually; for others, "call" will trigger the building automatically
+        x_shape, source_context_shape = input_shapes
+        attention_input_shapes = [(x_shape[0], self.embedding.output_dim + self.rnn_cell.output_dim), source_context_shape]
+        self.attention.build(input_shapes = attention_input_shapes)
+
+        attention_output_dim = self.attention.get_output_shape_for(attention_input_shapes)[-1]
+        rnn_cell_input_shape = (x_shape[0], self.embedding.output_dim + attention_output_dim)
+        self.rnn_cell.build(rnn_cell_input_shape)
+
+        self._layers = [self.attention, self.rnn_cell, self.mlp_classifier, self.embedding]
+
+    def call(self, inputs, mask = None):
+        raise NotImplementedError
+
     def get_config(self):
         config = {'rnn_cell': {'class_name': self.rnn_cell.__class__.__name__,
                             'config': self.rnn_cell.get_config()},
@@ -500,21 +515,6 @@ def RNNDecoderLayerBase(ComposedLayer):
         mlp_classifier = layer_from_config(config.pop('mlp_classifier'))
         return cls(rnn_cell, attention, embedding, mlp_classifier, **config)
 
-    def build(self, input_shapes):
-        # build the rnn_cell manually; for others, "call" will trigger the building automatically
-        x_shape, source_context_shape = input_shapes
-        attention_input_shapes = [(x_shape[0], self.embedding.output_dim + self.rnn_cell.output_dim), source_context_shape]
-        self.attention.build(input_shapes = attention_input_shapes)
-
-        attention_output_dim = self.attention.get_output_shape_for(attention_input_shapes)[-1]
-        rnn_cell_input_shape = (x_shape[0], self.embedding.output_dim + attention_output_dim)
-        self.rnn_cell.build(rnn_cell_input_shape)
-
-        self._layers = [self.attention, self.rnn_cell, self.mlp_classifier, self.embedding]
-
-    def call(self, inputs, mask = None):
-        raise NotImplementedError
-
 def RNNDecoderLayer(RNNDecoderLayerBase):
     '''Defines a RNN decoder for training, using the ground truth output
     '''
@@ -524,13 +524,14 @@ def RNNDecoderLayer(RNNDecoderLayerBase):
 
     def call(self, inputs, mask = None):
         input_x, context = inputs
+        input_x = self.embedding(input_x)
+
         if self.stateful:
             initial_states = self.rnn_cell.states
         else:
-            initial_states = K.zeros(shape = K.pack([K.shape(input_x)[0], self.rnn_cell.output_dim]))
+            initial_states = self.rnn_cell.get_initial_states(input_x)
 
-        input_x = self.embedding(input_x)
-        constants = self.get_constants(input_x)
+        constants = self.rnn_cell.get_constants(input_x)
         preprocessed_input = self.rnn_cell.preprocess_input(input_x)
 
         last_output, outputs, states = K.rnn(lambda x, states: self.step(x, states, context),
@@ -539,10 +540,9 @@ def RNNDecoderLayer(RNNDecoderLayerBase):
                                              go_backwards = self.rnn_cell.go_backwards,
                                              mask = mask,
                                              constants = constants,
-                                             unroll = self.rnn_cell.unroll,
-                                             input_length = None)
+                                             unroll = self.rnn_cell.unroll)
 
-        if self.stateful:
+        if self.rnn_cell.stateful:
             self.updates = []
             for i in range(len(states)):
                 self.updates.append((self.rnn_cell.states[i], states[i]))
@@ -574,9 +574,15 @@ def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
         if K.ndim(initial_input) == 2:
             initial_input = K.squeeze(initial_input, 1)
         initial_state = K.zeros(shape = K.pack([K.shape(initial_input)[0], self.rnn_cell.attention_context_dim]))  # (nb_samples, rnn_cell_output_dim)
-        return  beam_search(initial_input, initial_state, source_context, self.embedding,
-                                         step_func = lambda current_input, current_state, constant_context: self.step(current_input, current_state, constant_context),
-                                         beam_size = self.beam_size, max_length = self.max_output_length)
+
+        def step(current_input, current_state, constant_context):
+            output, states = self.step(current_input, [current_state], constant_context)
+            return output, states[0]
+
+        return  beam_search(initial_input, initial_state,
+                            source_context, self.embedding,
+                            step_func = step,
+                            beam_size = self.beam_size, max_length = self.max_output_length)
 
     def get_config(self):
         config = {'max_output_length': self.max_output_length,
