@@ -8,6 +8,7 @@ from layers import BiDirectionalLayer, MLPClassifierLayer
 import numpy as np
 from keras.layers import Input
 import keras.backend as K
+from keras.layers import Dense
 
 class LayersTest(unittest.TestCase):
     def test_BiDirectionalLayer(self):
@@ -30,8 +31,14 @@ class LayersTest(unittest.TestCase):
         output_dim = 4
         hidden_unit_numbers = [2, 3, 4]
         hidden_unit_activation_functions = ['relu', 'relu', 'relu']
-        layer = MLPClassifierLayer(output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
-                 output_activation_function = 'softmax', use_sequence_input = True)
+
+        output_layer = Dense(output_dim, activation = 'softmax')
+        hidden_layers = []
+        for hidden_unit_number, hidden_unit_activation_function in zip(hidden_unit_numbers, hidden_unit_activation_functions):
+            layer = Dense(hidden_unit_number, activation = hidden_unit_activation_function)
+            hidden_layers.append(layer)
+
+        layer = MLPClassifierLayer(output_layer, hidden_layers, use_sequence_input = True)
         # TODO: when in keras 1.0.8, time steps can be None
         input_tensor = Input((None, 2))
         output_tensor = layer(input_tensor)

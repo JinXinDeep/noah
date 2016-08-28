@@ -8,7 +8,7 @@ from keras import backend as K
 from keras.engine import Layer
 from .backend import reverse, inner_product, unpack, beam_search
 from .utils import check_and_throw_if_fail
-from keras.layers import Dense, BatchNormalization
+from keras.layers import  BatchNormalization
 from keras.layers.wrappers import Wrapper
 from keras.engine import InputSpec
 
@@ -271,42 +271,32 @@ class MLPClassifierLayer(ComposedLayer):
     '''
     Represents a mlp classifier, which consists of several hidden layers followed by a softmax/or sigmoid output layer.
     '''
-    # TODO: add regularization
-    def __init__(self, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
-                 output_activation_function = 'softmax', use_sequence_input = True, **kwargs):
+    def __init__(self, output_layer, hidden_layers = None, use_sequence_input = True, **kwargs):
         '''
         # Parameters
         ----------
-        output_dim: output dimension
-
-        hidden_unit_numbers: the number of hidden units of each hidden layer.
-        hidden_unit_activation_functions: the activation function of each hidden layers.
-        output_activation_function: activation function for classification, use 'sigmoid' for binary classification.
+        output_layer: output layer for classification, with sigmoid or softmax as activation function
+        hidden_layers: hidden layers
         use_sequence_input: the last two dimensions of the input has a shape of time_steps, input_dim, and the time_steps must be specified (required by unpack)
         '''
-        check_and_throw_if_fail(output_dim > 0, "output_dim")
-        check_and_throw_if_fail(len(hidden_unit_numbers) == len(hidden_unit_activation_functions), "hidden_unit_numbers")
-        super(MLPClassifierLayer, self).__init__(**kwargs)
-        self.output_dim = output_dim
-        self.hidden_unit_numbers = hidden_unit_numbers
-        self.hidden_unit_activation_functions = hidden_unit_activation_functions
-        self.output_activation_function = output_activation_function
+        self.output_layer = output_layer
+        self.hidden_layers = hidden_layers
         self.use_sequence_input = use_sequence_input
         super(MLPClassifierLayer, self).__init__(**kwargs)
 
     def build(self, input_shape):
-        for hidden_unit_number, hidden_unit_activation_function in zip(self.hidden_unit_numbers, self.hidden_unit_activation_functions):
-            dense = Dense(hidden_unit_number, activation = hidden_unit_activation_function)
-            if self.use_sequence_input:
-                dense = TimeDistributed(dense)
-            norm = BatchNormalization(mode = 2)
-            self._layers.append(dense)
-            self._layers.append(norm)
+        if self.hidden_layers:
+            for layer in self.hidden_layers:
+                if self.use_sequence_input:
+                    layer = TimeDistributed(layer)
+                norm = BatchNormalization(mode = 2)
+                self._layers.append(layer)
+                self._layers.append(norm)
 
-        dense = Dense(self.output_dim, activation = self.output_activation_function)
+
         if self.use_sequence_input:
-            dense = TimeDistributed(dense)
-        self._layers.append(dense)
+            layer = TimeDistributed(self.output_layer)
+        self._layers.append(layer)
 
     def call(self, x, mask = None):
         output = x
@@ -315,16 +305,32 @@ class MLPClassifierLayer(ComposedLayer):
         return output
 
     def get_output_shape_for(self, input_shape):
-        return input_shape[:-1] + (self.output_dim,)
+        return input_shape[:-1] + (self.output_layer.output_dim,)
 
     def get_config(self):
-        config = {'output_dim': self.output_dim,
-                  'use_sequence_input':self.use_sequence_input,
-                  'hidden_unit_numbers': self.hidden_unit_numbers,
-                  'hidden_unit_activation_functions': self.hidden_unit_activation_functions,
-                  'output_activation_function': self.output_activation_function}
+        if self.hidden_layers:
+            hidden_layers_config = [{'class_name': layer.attention.__class__.__name__,
+                            'config': self.layer.get_config()} for layer in self.hidden_layers]
+        else:
+            hidden_layers_config = None
+        config = {'output_layer': {'class_name': self.output_layer.__class__.__name__, 'config': self.output_layer.get_config()},
+                  'hidden_layers': hidden_layers_config,
+                  'use_sequence_input':self.use_sequence_input
+                  }
         base_config = super(MLPClassifierLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+    @classmethod
+    def from_config(cls, config):
+        from keras.utils.layer_utils import layer_from_config
+        output_layer = layer_from_config(config.pop('output_layer'))
+        hidden_layers_config = config.pop('hidden_layers')
+        if hidden_layers_config:
+            hidden_layers = [layer_from_config[hidden_layer_config] for hidden_layer_config in hidden_layers_config]
+        else:
+            hidden_layers = None
+        use_sequence_input = config.pop('use_sequence_input')
+        return cls(output_layer, hidden_layers, use_sequence_input, **config)
 
 class AttentionLayer(Layer):
     '''
@@ -589,11 +595,11 @@ def RNNDecoderLayerBase(ComposedLayer):
         config = {'rnn_cell': {'class_name': self.rnn_cell.__class__.__name__,
                             'config': self.rnn_cell.get_config()},
                   'attention': {'class_name': self.attention.__class__.__name__,
-                            'attention': self.attention.get_config()},
+                            'config': self.attention.get_config()},
                   'embedding': {'class_name': self.embedding.__class__.__name__,
-                            'embedding': self.embedding.get_config()},
+                            'config': self.embedding.get_config()},
                   'mlp_classifier': {'class_name': self.mlp_classifier.__class__.__name__,
-                            'attention': self.mlp_classifier.get_config()},
+                            'config': self.mlp_classifier.get_config()},
                   'stateful': self.stateful
                   }
         base_config = super(RNNDecoderLayerBase, self).get_config()
