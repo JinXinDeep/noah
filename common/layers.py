@@ -6,14 +6,13 @@ Created on Jul 16, 2016
 
 from keras import backend as K
 from keras.engine import Layer
-from .backend import reverse, inner_product, unpack, beam_search, dot
+from .backend import reverse, inner_product, beam_search, dot
 from .utils import check_and_throw_if_fail
 from keras.layers import  BatchNormalization
 from keras.layers.wrappers import Wrapper
 from keras.engine import InputSpec
+from keras import  initializations, regularizers, constraints
 
-from keras import activations, initializations, regularizers, constraints
-import numpy as np
 #================================start of overridden layers========================================#
 # Copied from keras 1.0.8 and made small adpation so that we can set time steps can be None
 class TimeDistributed(Wrapper):
@@ -462,173 +461,22 @@ class AttentionLayer(Layer):
         base_config = super(AttentionLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
-class GRUCell(Layer):
-    '''Gated Recurrent Unit - Cho et al. 2014.
-
-    # Arguments
-    ----------
-        attention_context_dim: dimension of the internal projections and the final output.
-        init: weight initialization function.
-            Can be the name of an existing function (str),
-            or a Theano function (see: [initializations](../initializations.md)).
-        inner_init: initialization function of the inner cells.
-        activation: activation function.
-            Can be the name of an existing function (str),
-            or a Theano function (see: [activations](../activations.md)).
-        inner_activation: activation function for the inner cells.
-        W_regularizers: instance of [WeightRegularizer](../regularizers.md)
-            (eg. L1 or L2 regularization), applied to the input weights matrices.
-        U_regularizer: instance of [WeightRegularizer](../regularizers.md)
-            (eg. L1 or L2 regularization), applied to the recurrent weights matrices.
-        b_regularizer: instance of [WeightRegularizer](../regularizers.md),
-            applied to the bias.
-        dropout_Ws: float between 0 and 1. Fraction of the input units to drop for input gates.
-        dropout_U: float between 0 and 1. Fraction of the input units to drop for recurrent connections.
-
-    # References
-    ----------
-        - [On the Properties of Neural Machine Translation: Encoder-Decoder Approaches](http://www.aclweb.org/anthology/W14-4012)
-        - [Empirical Evaluation of Gated Recurrent Neural Networks on Sequence Modeling](http://arxiv.org/pdf/1412.3555v1.pdf)
-        - [A Theoretically Grounded Application of Dropout in Recurrent Neural Networks](http://arxiv.org/abs/1512.05287)
-    '''
-
-    def __init__(self, output_dim,
-                 init = 'glorot_uniform', inner_init = 'orthogonal',
-                 activation = 'tanh', inner_activation = 'hard_sigmoid', consume_less = 'gpu',
-                 W_regularizers = None, U_regularizer = None, b_regularizer = None,
-                 **kwargs):
-        self.attention_context_dim = output_dim
-        self.init = initializations.get(init)
-        self.inner_init = initializations.get(inner_init)
-        self.activation = activations.get(activation)
-        self.inner_activation = activations.get(inner_activation)
-        if W_regularizers:
-            self.W_regularizers = [regularizers.get(W_regularizer) for W_regularizer in  W_regularizers]
-        else:
-            self.W_regularizers = None
-        self.U_regularizer = regularizers.get(U_regularizer)
-        self.b_regularizer = regularizers.get(b_regularizer)
-        self.consume_less = consume_less
-
-        if self.dropout_Ws and any([not dropout_W is None for dropout_W in self.dropout_Ws]):
-            self.uses_learning_phase = True
-        super(GRUCell, self).__init__(**kwargs)
-
-    def build(self, input_shapes):
-        self.Ws = []
-        # multiple inputs supports
-        input_dims = [input_shape[1] for input_shape in input_shapes[:-1]]
-        if self.consume_less == 'gpu':
-            for input_dim in input_dims:
-                self.Ws.append (self.inner_init((input_dim, 3 * self.attention_context_dim)))
-            self.U = self.inner_init((self.attention_context_dim, 3 * self.attention_context_dim))
-            self.b = K.variable(np.hstack((np.zeros(self.attention_context_dim), np.zeros(self.attention_context_dim), np.zeros(self.attention_context_dim))))
-            self.trainable_weights = self.Ws + [self.U, self.b]
-        else:
-            self.W_z = []
-            self.W_r = []
-            self.W_h = []
-            self.Ws = []
-            for input_dim in input_dims:
-                self.W_z.append(self.inner_init((input_dim, self.attention_context_dim)))
-                self.W_r.append(self.inner_init((input_dim, self.attention_context_dim)))
-                self.W_h.append(self.inner_init((input_dim, self.attention_context_dim)))
-                self.Ws.append (K.concatenate([self.W_z[-1], self.W_r[-1], self.W_h[-1]]))
-
-            self.U_z = self.inner_init((self.attention_context_dim, self.attention_context_dim))
-            self.U_r = self.inner_init((self.attention_context_dim, self.attention_context_dim))
-            self.U_h = self.inner_init((self.attention_context_dim, self.attention_context_dim))
-            self.U = K.concatenate([self.U_z, self.U_r, self.U_h])
-
-            self.b_z = K.zeros((self.attention_context_dim,))
-            self.b_r = K.zeros((self.attention_context_dim,))
-            self.b_h = K.zeros((self.attention_context_dim,))
-            self.b = K.concatenate([ self.b_z, self.b_r, self.b_h])
-
-            self.trainable_weights = self.W_z + self.W_r + self.W_h + [self.U_z, self.U_r, self.U_h, self.b_z, self.b_r, self.b_h]
-
-        self.regularizers = []
-        if self.W_regularizers:
-            for W, W_regularizer in zip(self.Ws, self.W_regularizers):
-                W_regularizer.set_param(W)
-                self.regularizers.append(W_regularizer)
-        if self.U_regularizer:
-            self.U_regularizer.set_param(self.U)
-            self.regularizers.append(self.U_regularizer)
-        if self.b_regularizer:
-            self.b_regularizer.set_param(self.b)
-            self.regularizers.append(self.b_regularizer)
-
-    def call(self, inputs, mask = None):
-        # the last one is previous state
-        h_prev = inputs[-1]
-        if self.consume_less == 'gpu':
-            x = self.b
-            for y, W in zip(inputs[:-1], self.Ws):
-                x += K.dot(y , W)
-
-            x_z = x[:, :self.attention_context_dim]
-            x_r = x[:, self.attention_context_dim: 2 * self.attention_context_dim]
-            x_h = x[:, 2 * self.attention_context_dim:]
-
-            matrix_inner = K.dot(h_prev , self.U[:, :2 * self.attention_context_dim])
-            inner_z = matrix_inner[:, :self.attention_context_dim]
-            inner_r = matrix_inner[:, self.attention_context_dim: 2 * self.attention_context_dim]
-            z = self.inner_activation(x_z + inner_z)
-            r = self.inner_activation(x_r + inner_r)
-            inner_h = K.dot(r * h_prev , self.U[:, 2 * self.attention_context_dim:])
-            hh = self.activation(x_h + inner_h)
-        else:
-            x_z = self.b_z
-            x_r = self.b_r
-            x_h = self.b_h
-            for y, W_z, W_r, W_h in zip (inputs[:-1], self.W_z, self.W_r, self.W_h):
-                x_z += K.dot(y, W_z)
-                x_r += K.dot(y, W_r)
-                x_h += K.dot(y, W_h)
-            z = self.inner_activation(x_z + K.dot(h_prev , self.U_z))
-            r = self.inner_activation(x_r + K.dot(h_prev, self.U_r))
-            inner_h = K.dot(r * h_prev , self.U_h)
-            hh = self.activation(x_h + inner_h)
-        return  (1 - z) * h_prev + z * hh  # consistent with the formula in the paper
-
-    def get_output_shape_for(self, input_shapes):
-        return (input_shapes[0][0], self.attention_context_dim)
-
-    def get_config(self):
-        config = {'attention_context_dim': self.attention_context_dim,
-                  'init': self.init.__name__,
-                  'inner_init': self.inner_init.__name__,
-                  'activation': self.activation.__name__,
-                  'inner_activation': self.inner_activation.__name__,
-                  'consume_less':self.consume_less,
-                  'W_regularizers': [W_regularizer.get_config() if W_regularizer else None for W_regularizer in self.W_regularizers ] if self.W_regularizer else None,
-                  'U_regularizer': self.U_regularizer.get_config() if self.U_regularizer else None,
-                  'b_regularizer': self.b_regularizer.get_config() if self.b_regularizer else None,
-                }
-        base_config = super(GRUCell, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
-
 def RNNDecoderLayerBase(ComposedLayer):
-    '''RNN layer base class, which employs a RNN, an attention mechanism, an embedding, and a MLP classifier to decode a sequence.
+    '''RNN layer decoder base class, which employs a rnn cell (re-use those defined by keras, such as GRU and LSTM), an attention mechanism, an embedding, and a MLP classifier to decode a sequence.
     '''
-    def __init__(self, rnn_cell, attention, embedding, mlp_classifier, stateful = False, **kwargs):
-        # TODO: apply drop out to inputs and inner outputs
+    def __init__(self, rnn_cell, attention, embedding, mlp_classifier, **kwargs):
         self.rnn_cell = rnn_cell
         self.attention = attention
         self.mlp_classifier = mlp_classifier
         self.embedding = embedding
-        self.stateful = stateful
         super(RNNDecoderLayerBase, self).__init__(**kwargs)
-        # Since self._layers is set to empty in parent's constructor, we must put the following line after the calling of the parent's constructor
-        self._layers = [self.rnn_cell, self.attention, self.mlp_classifier, self.embedding]
 
-    def step(self, x, state, source_context):
-        h_prev = state  # previous output
-        c = self.attention(h_prev, source_context)
-        h = self.rnn_cell([x, c, h_prev])
+    def step(self, x, states, source_context):
+        h_prev = states[0]  # previous output
+        c = self.attention(K.concatenate([x, h_prev]), source_context)
+        h, _ = self.rnn_cell.step(K.concatenate([x, c]), states = [h_prev])
         output = self.mlp_classifier(h)
-        return output, h
+        return output, [h]
 
     def get_config(self):
         config = {'rnn_cell': {'class_name': self.rnn_cell.__class__.__name__,
@@ -638,8 +486,7 @@ def RNNDecoderLayerBase(ComposedLayer):
                   'embedding': {'class_name': self.embedding.__class__.__name__,
                             'config': self.embedding.get_config()},
                   'mlp_classifier': {'class_name': self.mlp_classifier.__class__.__name__,
-                            'config': self.mlp_classifier.get_config()},
-                  'stateful': self.stateful
+                            'config': self.mlp_classifier.get_config()}
                   }
         base_config = super(RNNDecoderLayerBase, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -651,56 +498,59 @@ def RNNDecoderLayerBase(ComposedLayer):
         attention = layer_from_config(config.pop('attention'))
         embedding = layer_from_config(config.pop('embedding'))
         mlp_classifier = layer_from_config(config.pop('mlp_classifier'))
-        stateful = config.pop('stateful')
-        return cls(rnn_cell, attention, embedding, mlp_classifier, stateful, **config)
+        return cls(rnn_cell, attention, embedding, mlp_classifier, **config)
 
     def build(self, input_shapes):
+        # build the rnn_cell manually; for others, "call" will trigger the building automatically
+        x_shape, source_context_shape = input_shapes
+        attention_input_shapes = [(x_shape[0], self.embedding.output_dim + self.rnn_cell.output_dim), source_context_shape]
+        self.attention.build(input_shapes = attention_input_shapes)
+
+        attention_output_dim = self.attention.get_output_shape_for(attention_input_shapes)[-1]
+        rnn_cell_input_shape = (x_shape[0], self.embedding.output_dim + attention_output_dim)
+        self.rnn_cell.build(rnn_cell_input_shape)
+
+        self._layers = [self.attention, self.rnn_cell, self.mlp_classifier, self.embedding]
+
+    def call(self, inputs, mask = None):
         raise NotImplementedError
 
-
 def RNNDecoderLayer(RNNDecoderLayerBase):
-    '''Defines a RNN based decoder for training, using the ground truth output
+    '''Defines a RNN decoder for training, using the ground truth output
     '''
     def get_output_shape_for(self, input_shapes):
         input_shape, _ = input_shapes
-        return (input_shape[0], input_shape[1], self.mlp_classifier.attention_context_dim)
-
-    def build(self, input_shapes):
-        input_shape, _ = input_shapes
-        if self.stateful:
-            check_and_throw_if_fail(not input_shape[0] , 'If a RNN is stateful, a complete  input_shape must be provided (including batch size).')
-            self.state = K.zeros((input_shape[0], self.rnn_cell.attention_context_dim))
-        else:
-            # initial states: all-zero tensor of get_shape (attention_context_dim)
-            self.state = None
+        return (input_shape[0], input_shape[1], self.mlp_classifier.output_dim)
 
     def call(self, inputs, mask = None):
         input_x, context = inputs
         if self.stateful:
-            current_state = self.states
+            initial_states = self.rnn_cell.states
         else:
-            current_state = K.zeros(shape = K.pack([K.shape(input_x)[0], self.rnn_cell.attention_context_dim]))
+            initial_states = K.zeros(shape = K.pack([K.shape(input_x)[0], self.rnn_cell.output_dim]))
 
         input_x = self.embedding(input_x)
-        input_x = K.permute_dimensions(input_x, axes = [1, 0, 2])  # shape: time_steps, batch-size, input_dim
-        input_x_list = unpack(input_x)
-        successive_state_list = []
-        successive_output_list = []
-        for current_input in input_x_list:
-            # TODO: randomly use the real greedy output as the next input_x
-            output, current_state = self.step(current_input, current_state, context)
-            successive_output_list.append(output)
-            successive_state_list.append(current_state)
-        output_sequence = K.pack(successive_output_list)
-        output_sequence = K.permute_dimensions(output_sequence, axes = [1, 0, 2])
-        new_state = successive_state_list[-1]
+        constants = self.get_constants(input_x)
+        preprocessed_input = self.rnn_cell.preprocess_input(input_x)
+
+        last_output, outputs, states = K.rnn(lambda x, states: self.step(x, states, context),
+                                             preprocessed_input,
+                                             initial_states,
+                                             go_backwards = self.rnn_cell.go_backwards,
+                                             mask = mask,
+                                             constants = constants,
+                                             unroll = self.rnn_cell.unroll,
+                                             input_length = None)
 
         if self.stateful:
-            # Warning: self.state is shared by all calls on this layer
             self.updates = []
-            self.updates.append((self.state, new_state))
-        return output_sequence
+            for i in range(len(states)):
+                self.updates.append((self.rnn_cell.states[i], states[i]))
 
+        if self.rnn_cell.return_sequences:
+            return outputs
+        else:
+            return last_output
 
 def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
     '''Defines a RNN based decoder for prediction, using beam search.
