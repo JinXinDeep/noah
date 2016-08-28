@@ -336,15 +336,16 @@ class AttentionLayer(Layer):
     '''
     Calculates a weighted sum tensor from the given input tensors, according to http://nlp.ict.ac.cn/Admin/kindeditor/attached/file/20141011/20141011133445_31922.pdf
     '''
-    def __init__(self, output_dim, init_W_a = 'glorot_uniform', init_U_a = 'glorot_uniform', init_v_a = 'uniform',
+    def __init__(self, attention_context_dim, weights = None, init_W_a = 'glorot_uniform', init_U_a = 'glorot_uniform', init_v_a = 'uniform',
                  W_a_regularizer = None, U_a_regularizer = None, v_a_regularizer = None,
                  W_a_constraint = None, U_a_constraint = None, v_a_constraint = None, **kwargs):
         '''
         # Parameters
         ----------
-        output_dim: output dimension of the attention tensor
+        attention_context_dim: dimension of the inner attention context vector
         '''
-        self.output_dim = output_dim
+        self.attention_context_dim = attention_context_dim
+
         self.init_W_a = initializations.get(init_W_a)
         self.init_U_a = initializations.get(init_U_a)
         self.init_v_a = initializations.get(init_v_a)
@@ -357,6 +358,8 @@ class AttentionLayer(Layer):
         self.U_a_constraint = constraints.get(U_a_constraint)
         self.v_a_constraint = constraints.get(v_a_constraint)
 
+        self.initial_weights = weights
+
         super(AttentionLayer, self).__init__(**kwargs)
 
     def build(self, input_shapes):
@@ -366,9 +369,10 @@ class AttentionLayer(Layer):
         input_shapes: the input shape of s and h, respectively; s with a shape of nb_samples, input_dim while h nb_samples, time_steps, input_dim
         '''
 
-        self.W_a = self.init_W_a((input_shapes[0][-1], self.output_dim))
-        self.U_a = self.init_U_a((input_shapes[-1][-1], self.output_dim))
-        self.v_a = self.init_v_a((self.output_dim,))
+        self.W_a = self.init_W_a((input_shapes[0][-1], self.attention_context_dim))
+        self.U_a = self.init_U_a((input_shapes[-1][-1], self.attention_context_dim))
+        self.v_a = self.init_v_a((self.attention_context_dim,))
+
         self.trainable_weights = [self.W_a, self.U_a, self.v_a]
 
         self.regularizers = []
@@ -390,27 +394,54 @@ class AttentionLayer(Layer):
         if self.v_a_constraint:
             self.constraints[self.v_a] = self.v_a_constraint
 
+        if self.initial_weights is not None:
+            self.set_weights(self.initial_weights)
+            del self.initial_weights
+
+    @staticmethod
+    def _calc(s, h, W_a, U_a, v_a, tensors_to_debug = None):
+        U_a_h = K.dot(h, U_a)  # nb_samples, time_steps, attention_context_dim
+        W_a_s = K.expand_dims(K.dot(s, W_a), 1)  # nb_samples, 1, attention_context_dim
+        if tensors_to_debug is not None:
+            tensors_to_debug.append(W_a_s)
+            tensors_to_debug.append(U_a_h)
+        W_U_sum = W_a_s + U_a_h
+        if tensors_to_debug is not None:
+            tensors_to_debug.append(W_U_sum)
+        e = K.tanh (W_U_sum)  # nb_samples, time_steps, attention_context_dim
+        if tensors_to_debug is not None:
+            tensors_to_debug.append(e)
+        e = inner_product(e, v_a)  # nb_samples, time_steps
+        if tensors_to_debug is not None:
+            tensors_to_debug.append(e)
+        e = K.exp (e)
+        if tensors_to_debug is not None:
+            tensors_to_debug.append(e)
+        e_sum = K.sum(e, -1, keepdims = True)  # nb_samples, 1
+        if tensors_to_debug is not None:
+            tensors_to_debug.append(e_sum)
+        a = e / e_sum  # nb_samples, time_steps
+        if tensors_to_debug is not None:
+            tensors_to_debug.append(a)
+        a = K.expand_dims(a)  # nb_samples, time_steps, 1
+        c = a * h  # nb_samples, time_steps, h_input_dim
+        if tensors_to_debug is not None:
+            tensors_to_debug.append(c)
+        c = K.sum(c, axis = 1)  # nb_samples, h_input_dim
+        return c
+
     def call(self, inputs, mask = None):
         # s: nb_sample,input_dim
         # h: nb_samples,time_steps, h_input_dim
         s, h = inputs
-        U_a_h = K.dot(h, self.U_a)  # nb_samples, time_steps, output_dim
-        W_a_s = K.expand_dims(K.dot(s, self.W_a), 1)  # nb_samples, 1, output_dim
-        e = K.tanh (W_a_s + U_a_h)  # nb_samples, time_steps, output_dim
-        e = inner_product(e, self.v_a)  # nb_samples, time_steps
-        e = K.exp (e)
-        e_sum = K.sum(e, -1, keepdims = True)  # nb_samples, 1
-        a = e / e_sum  # nb_samples, time_steps
-        a = K.expand_dims(a)  # nb_samples, time_steps, 1
-        c = a * h  # nb_samples, time_steps, h_input_dim
-        c = K.sum(c, axis = 1)  # nb_samples, h_input_dim
-        return c
+        return AttentionLayer._calc(s, h, self.W_a, self.U_a, self.v_a)
+
 
     def get_output_shape_for(self, input_shapes):
         return (input_shapes[1][0], input_shapes[1][2])
 
     def get_config(self):
-        config = {'output_dim': self.output_dim,
+        config = {'attention_context_dim': self.attention_context_dim,
                   'init_W_a': self.init_W_a.__name__,
                   'init_U_a': self.init_U_a.__name__,
                   'init_v_a': self.init_v_a.__name__,
@@ -428,7 +459,7 @@ class GRUCell(Layer):
 
     # Arguments
     ----------
-        output_dim: dimension of the internal projections and the final output.
+        attention_context_dim: dimension of the internal projections and the final output.
         init: weight initialization function.
             Can be the name of an existing function (str),
             or a Theano function (see: [initializations](../initializations.md)).
@@ -458,7 +489,7 @@ class GRUCell(Layer):
                  activation = 'tanh', inner_activation = 'hard_sigmoid', consume_less = 'gpu',
                  W_regularizers = None, U_regularizer = None, b_regularizer = None,
                  **kwargs):
-        self.output_dim = output_dim
+        self.attention_context_dim = output_dim
         self.init = initializations.get(init)
         self.inner_init = initializations.get(inner_init)
         self.activation = activations.get(activation)
@@ -481,9 +512,9 @@ class GRUCell(Layer):
         input_dims = [input_shape[1] for input_shape in input_shapes[:-1]]
         if self.consume_less == 'gpu':
             for input_dim in input_dims:
-                self.Ws.append (self.inner_init((input_dim, 3 * self.output_dim)))
-            self.U = self.inner_init((self.output_dim, 3 * self.output_dim))
-            self.b = K.variable(np.hstack((np.zeros(self.output_dim), np.zeros(self.output_dim), np.zeros(self.output_dim))))
+                self.Ws.append (self.inner_init((input_dim, 3 * self.attention_context_dim)))
+            self.U = self.inner_init((self.attention_context_dim, 3 * self.attention_context_dim))
+            self.b = K.variable(np.hstack((np.zeros(self.attention_context_dim), np.zeros(self.attention_context_dim), np.zeros(self.attention_context_dim))))
             self.trainable_weights = self.Ws + [self.U, self.b]
         else:
             self.W_z = []
@@ -491,19 +522,19 @@ class GRUCell(Layer):
             self.W_h = []
             self.Ws = []
             for input_dim in input_dims:
-                self.W_z.append(self.inner_init((input_dim, self.output_dim)))
-                self.W_r.append(self.inner_init((input_dim, self.output_dim)))
-                self.W_h.append(self.inner_init((input_dim, self.output_dim)))
+                self.W_z.append(self.inner_init((input_dim, self.attention_context_dim)))
+                self.W_r.append(self.inner_init((input_dim, self.attention_context_dim)))
+                self.W_h.append(self.inner_init((input_dim, self.attention_context_dim)))
                 self.Ws.append (K.concatenate([self.W_z[-1], self.W_r[-1], self.W_h[-1]]))
 
-            self.U_z = self.inner_init((self.output_dim, self.output_dim))
-            self.U_r = self.inner_init((self.output_dim, self.output_dim))
-            self.U_h = self.inner_init((self.output_dim, self.output_dim))
+            self.U_z = self.inner_init((self.attention_context_dim, self.attention_context_dim))
+            self.U_r = self.inner_init((self.attention_context_dim, self.attention_context_dim))
+            self.U_h = self.inner_init((self.attention_context_dim, self.attention_context_dim))
             self.U = K.concatenate([self.U_z, self.U_r, self.U_h])
 
-            self.b_z = K.zeros((self.output_dim,))
-            self.b_r = K.zeros((self.output_dim,))
-            self.b_h = K.zeros((self.output_dim,))
+            self.b_z = K.zeros((self.attention_context_dim,))
+            self.b_r = K.zeros((self.attention_context_dim,))
+            self.b_h = K.zeros((self.attention_context_dim,))
             self.b = K.concatenate([ self.b_z, self.b_r, self.b_h])
 
             self.trainable_weights = self.W_z + self.W_r + self.W_h + [self.U_z, self.U_r, self.U_h, self.b_z, self.b_r, self.b_h]
@@ -528,16 +559,16 @@ class GRUCell(Layer):
             for y, W in zip(inputs[:-1], self.Ws):
                 x += K.dot(y , W)
 
-            x_z = x[:, :self.output_dim]
-            x_r = x[:, self.output_dim: 2 * self.output_dim]
-            x_h = x[:, 2 * self.output_dim:]
+            x_z = x[:, :self.attention_context_dim]
+            x_r = x[:, self.attention_context_dim: 2 * self.attention_context_dim]
+            x_h = x[:, 2 * self.attention_context_dim:]
 
-            matrix_inner = K.dot(h_prev , self.U[:, :2 * self.output_dim])
-            inner_z = matrix_inner[:, :self.output_dim]
-            inner_r = matrix_inner[:, self.output_dim: 2 * self.output_dim]
+            matrix_inner = K.dot(h_prev , self.U[:, :2 * self.attention_context_dim])
+            inner_z = matrix_inner[:, :self.attention_context_dim]
+            inner_r = matrix_inner[:, self.attention_context_dim: 2 * self.attention_context_dim]
             z = self.inner_activation(x_z + inner_z)
             r = self.inner_activation(x_r + inner_r)
-            inner_h = K.dot(r * h_prev , self.U[:, 2 * self.output_dim:])
+            inner_h = K.dot(r * h_prev , self.U[:, 2 * self.attention_context_dim:])
             hh = self.activation(x_h + inner_h)
         else:
             x_z = self.b_z
@@ -554,10 +585,10 @@ class GRUCell(Layer):
         return  (1 - z) * h_prev + z * hh  # consistent with the formula in the paper
 
     def get_output_shape_for(self, input_shapes):
-        return (input_shapes[0][0], self.output_dim)
+        return (input_shapes[0][0], self.attention_context_dim)
 
     def get_config(self):
-        config = {'output_dim': self.output_dim,
+        config = {'attention_context_dim': self.attention_context_dim,
                   'init': self.init.__name__,
                   'inner_init': self.inner_init.__name__,
                   'activation': self.activation.__name__,
@@ -624,15 +655,15 @@ def RNNDecoderLayer(RNNDecoderLayerBase):
     '''
     def get_output_shape_for(self, input_shapes):
         input_shape, _ = input_shapes
-        return (input_shape[0], input_shape[1], self.mlp_classifier.output_dim)
+        return (input_shape[0], input_shape[1], self.mlp_classifier.attention_context_dim)
 
     def build(self, input_shapes):
         input_shape, _ = input_shapes
         if self.stateful:
             check_and_throw_if_fail(not input_shape[0] , 'If a RNN is stateful, a complete  input_shape must be provided (including batch size).')
-            self.state = K.zeros((input_shape[0], self.rnn_cell.output_dim))
+            self.state = K.zeros((input_shape[0], self.rnn_cell.attention_context_dim))
         else:
-            # initial states: all-zero tensor of get_shape (output_dim)
+            # initial states: all-zero tensor of get_shape (attention_context_dim)
             self.state = None
 
     def call(self, inputs, mask = None):
@@ -640,7 +671,7 @@ def RNNDecoderLayer(RNNDecoderLayerBase):
         if self.stateful:
             current_state = self.states
         else:
-            current_state = K.zeros(shape = K.pack([K.shape(input_x)[0], self.rnn_cell.output_dim]))
+            current_state = K.zeros(shape = K.pack([K.shape(input_x)[0], self.rnn_cell.attention_context_dim]))
 
         input_x = self.embedding(input_x)
         input_x = K.permute_dimensions(input_x, axes = [1, 0, 2])  # shape: time_steps, batch-size, input_dim
@@ -684,7 +715,7 @@ def RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
         initial_input, source_context = inputs
         if K.ndim(initial_input) == 2:
             initial_input = K.squeeze(initial_input, 1)
-        initial_state = K.zeros(shape = K.pack([K.shape(initial_input)[0], self.rnn_cell.output_dim]))  # (nb_samples, rnn_cell_output_dim)
+        initial_state = K.zeros(shape = K.pack([K.shape(initial_input)[0], self.rnn_cell.attention_context_dim]))  # (nb_samples, rnn_cell_output_dim)
         return  beam_search(initial_input, initial_state, source_context, self.embedding,
                                          step_func = lambda current_input, current_state, constant_context: self.step(current_input, current_state, constant_context),
                                          beam_size = self.beam_size, max_length = self.max_output_length)

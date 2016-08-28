@@ -4,7 +4,7 @@ Created on Aug 26, 2016
 @author: lxh5147
 '''
 import unittest
-from layers import BiDirectionalLayer, MLPClassifierLayer
+from layers import BiDirectionalLayer, MLPClassifierLayer, AttentionLayer
 import numpy as np
 from keras.layers import Input
 import keras.backend as K
@@ -53,6 +53,38 @@ class LayersTest(unittest.TestCase):
         output_tensor_value = f([input_tensor_value])[0]
         self.assertEqual(output_tensor_value.shape, (2, 3, 4), "output_tensor_value")
         # TODO: verify the correctness of the value
+
+    def test_AttentionLayer(self):
+        attention_context_dim = 2
+
+        init_W_a = np.array([[1, 2], [3, 4], [5, 6]])  # 3*2
+        init_U_a = np.array([[1, 2], [3, 4], [5, 6], [7, 8]])  # 4*2
+        init_v_a = np.array([0.1, 0.2])
+
+        layer = AttentionLayer(attention_context_dim = attention_context_dim, weights = [init_W_a, init_U_a, init_v_a])
+        # test config
+        self.assertEqual(layer.get_config(), AttentionLayer.from_config(layer.get_config()).get_config(), "config")
+
+        s = Input((3,))  # current state tensor
+        h = Input((2, 4))
+        self.assertEqual(layer([s, h])._keras_shape, (None, 4), "_keras_shape")
+
+        tensors_to_debug = []
+        output = AttentionLayer._calc(s, h, K.variable(init_W_a), K.variable(init_U_a), K.variable(init_v_a) , tensors_to_debug)
+        # check keras shape
+        # self.assertEqual(output._keras_shape, (None, 4), "_keras_shape")
+        # check with call
+        f = K.function(inputs = [s, h ], outputs = [output] + tensors_to_debug)
+        s_val = [[1, 2, 3], [4, 5, 6]]
+        h_val = [[[1, 2, 3, 4], [5, 6, 7, 8]], [[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]]]
+        output_val_ref = [[3, 4, 5, 6], [0.3, 0.4, 0.5, 0.6]]
+        output_val_list = f([s_val, h_val])
+        output_val = output_val_list[0]
+        W_U_sum_val = output_val_list[3]
+        W_U_sum_val_ref = [[[72., 88.], [136., 168.]], [[54., 70.], [60.4, 78.]]]
+        self.assertTrue(np.sum(np.abs(output_val - output_val_ref)) < 0.0001, 'output_val')
+        self.assertTrue(np.sum(np.abs(W_U_sum_val - W_U_sum_val_ref)) < 0.0001, 'W_U_sum_val')
+
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
     unittest.main()
