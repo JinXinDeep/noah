@@ -272,7 +272,7 @@ class MLPClassifierLayer(ComposedLayer):
     Represents a mlp classifier, which consists of several hidden layers followed by a softmax/or sigmoid output layer.
     '''
     # TODO: add regularization
-    def __init__(self, hidden_layers, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
+    def __init__(self, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
                  output_activation_function = 'softmax', use_sequence_input = True, **kwargs):
         '''
         # Parameters
