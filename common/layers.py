@@ -14,12 +14,12 @@ from keras.layers.wrappers import TimeDistributed
 from keras import activations, initializations, regularizers, constraints
 import numpy as np
 
-
 class ComposedLayer(Layer):
     '''A layer that employs a set of children layers to complete its call. All the children layers must be created in its constructor.
     '''
     def __init__(self, **kwargs):
         ''' Constructor of a composed layer, which should be called as the last function call of the constructor of its sub class by that sub class to construct its children layers.
+        Note that most of following lines are shamelessly adapted from keras
         '''
         # Logic copied from layer with small adaption
         if not hasattr(self, 'input_spec'):
@@ -150,6 +150,10 @@ class ComposedLayer(Layer):
 class BiDirectionalLayer(Layer):
     '''Defines a layer that combines one input sequence from left to right and the other sequence from right to left.
     '''
+    def __init__(self, time_step_axis = 1, **kwargs):
+        self.time_step_axis = time_step_axis  # along which axis to reverse
+        super(BiDirectionalLayer, self).__init__(**kwargs)
+
     def call(self, inputs, mask = None):
         """
         # Parameters
@@ -160,14 +164,21 @@ class BiDirectionalLayer(Layer):
         right_to_left = inputs[1]
         ndim = K.ndim(right_to_left)
         # reshape nb_samples, time_steps,  ... -> time_steps,nb_samples,...
-        axes = [1, 0] + list(range(2, ndim))
-        right_to_left = K.permute_dimensions(right_to_left, axes)
+        if self.time_step_axis != 0:
+            axes = [self.time_step_axis, 0] + [i for i in range(1, ndim) if i != self.time_step_axis]
+            right_to_left = K.permute_dimensions(right_to_left, axes)
         right_to_left = reverse(right_to_left)
-        right_to_left = K.permute_dimensions(right_to_left, axes)
+        if self.time_step_axis != 0:
+            right_to_left = K.permute_dimensions(right_to_left, axes)
         return K.concatenate([left_to_right, right_to_left], axis = -1)
 
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0][:-1] + (input_shapes[0][-1] + input_shapes[1][-1],)
+
+    def get_config(self):
+        config = {'time_step_axis': self.time_step_axis}
+        base_config = super(BiDirectionalLayer, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
 
 class MLPClassifierLayer(ComposedLayer):
     '''
@@ -344,7 +355,7 @@ class GRUCell(Layer):
 
     # References
     ----------
-        - [On the Properties of Neural Machine Translation: Encoder–Decoder Approaches](http://www.aclweb.org/anthology/W14-4012)
+        - [On the Properties of Neural Machine Translation: Encoder-Decoder Approaches](http://www.aclweb.org/anthology/W14-4012)
         - [Empirical Evaluation of Gated Recurrent Neural Networks on Sequence Modeling](http://arxiv.org/pdf/1412.3555v1.pdf)
         - [A Theoretically Grounded Application of Dropout in Recurrent Neural Networks](http://arxiv.org/abs/1512.05287)
     '''

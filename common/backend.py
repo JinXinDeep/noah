@@ -371,7 +371,7 @@ elif K._BACKEND == 'tensorflow':
         '''
         return tf.unpack(x, num = num)
 
-    def reverse(x, num = None):
+    def reverse(x):
         '''Reverses elements of a tensor along its first dimension.
 
         # Parameters
@@ -383,9 +383,11 @@ elif K._BACKEND == 'tensorflow':
         ------
         the reversed tensor with the same shape of the input
         '''
-        x_list = tf.unpack(x, num)
-        x_list.reverse()
-        return K.pack(x_list)
+        x_shape = K.shape(x)
+        nb_samples = x_shape[0]
+        ones = tf.ones(shape = K.pack([nb_samples]), dtype = 'int32')
+        elems = tf.scan(lambda prev, one: prev - one , ones, initializer = nb_samples)
+        return tf.scan(lambda prev, i: K.gather(x, i), elems, initializer = tf.zeros(shape = x_shape[1:], dtype = x.dtype))
 
     # Finds values and indices of the k largest entries for the last dimension.
     def top_k(x, k = 1, sorted_by_value_descent = True):
