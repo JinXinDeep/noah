@@ -309,8 +309,8 @@ class MLPClassifierLayer(ComposedLayer):
 
     def get_config(self):
         if self.hidden_layers:
-            hidden_layers_config = [{'class_name': layer.attention.__class__.__name__,
-                            'config': self.layer.get_config()} for layer in self.hidden_layers]
+            hidden_layers_config = [{'class_name': layer.__class__.__name__,
+                            'config': layer.get_config()} for layer in self.hidden_layers]
         else:
             hidden_layers_config = None
         config = {'output_layer': {'class_name': self.output_layer.__class__.__name__, 'config': self.output_layer.get_config()},
@@ -326,7 +326,7 @@ class MLPClassifierLayer(ComposedLayer):
         output_layer = layer_from_config(config.pop('output_layer'))
         hidden_layers_config = config.pop('hidden_layers')
         if hidden_layers_config:
-            hidden_layers = [layer_from_config[hidden_layer_config] for hidden_layer_config in hidden_layers_config]
+            hidden_layers = [layer_from_config(hidden_layer_config) for hidden_layer_config in hidden_layers_config]
         else:
             hidden_layers = None
         use_sequence_input = config.pop('use_sequence_input')

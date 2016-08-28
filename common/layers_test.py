@@ -13,7 +13,9 @@ from keras.layers import Dense
 class LayersTest(unittest.TestCase):
     def test_BiDirectionalLayer(self):
         layer = BiDirectionalLayer(time_step_axis = 1)
-        # work when time steps = None
+        # test config
+        self.assertEqual(layer.get_config(), BiDirectionalLayer.from_config(layer.get_config()).get_config(), "config")
+
         left_to_right = Input((None, 3))
         right_to_left = Input((None, 2))
         output = layer([left_to_right, right_to_left])
@@ -39,7 +41,9 @@ class LayersTest(unittest.TestCase):
             hidden_layers.append(layer)
 
         layer = MLPClassifierLayer(output_layer, hidden_layers, use_sequence_input = True)
-        # TODO: when in keras 1.0.8, time steps can be None
+        # test config
+        self.assertEqual(layer.get_config(), MLPClassifierLayer.from_config(layer.get_config()).get_config(), "config")
+
         input_tensor = Input((None, 2))
         output_tensor = layer(input_tensor)
         self.assertEqual(output_tensor._keras_shape, (None, None, 4), "_keras_shape")
