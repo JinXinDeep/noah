@@ -9,6 +9,8 @@ import numpy as np
 import keras.backend as K
 from keras.layers import Dense, Input, GRU, Embedding
 
+np.random.seed(20080524)
+
 class LayersTest(unittest.TestCase):
     def test_BiDirectionalLayer(self):
         layer = BiDirectionalLayer(time_step_axis = 1)
@@ -100,12 +102,29 @@ class LayersTest(unittest.TestCase):
             layer = Dense(hidden_unit_number, activation = hidden_unit_activation_function)
             hidden_layers.append(layer)
 
-        mlp_classifier = MLPClassifierLayer(classifier_output_layer, hidden_layers, use_sequence_input = True)
+        mlp_classifier = MLPClassifierLayer(classifier_output_layer, hidden_layers, use_sequence_input = False)
         layer = RNNDecoderLayerBase(rnn_cell, attention, embedding, mlp_classifier)
         # test config: should use custom objects for custom layers
         custom_objects = {AttentionLayer.__name__: AttentionLayer, MLPClassifierLayer.__name__:MLPClassifierLayer}
         self.assertEqual(layer.get_config(), RNNDecoderLayerBase.from_config(layer.get_config(), custom_objects).get_config(), "config")
+        # test step: before calling step,build the layer first
+        input_x_shape = (None, None)
+        context_shape = (None, None, embedding_dim)
+        layer.build(input_shapes = [input_x_shape, context_shape])
 
+        x_step = K.placeholder((None, embedding_dim))
+        context = K.placeholder((None, None, embedding_dim))
+        state = K.placeholder((None, rnn_cell_output_dim))
+        constants = rnn_cell.get_constants(K.expand_dims(x_step, 1))
+        output, states = layer.step(x_step, [state] + constants , context)
+        f = K.function(inputs = [x_step, context, state ], outputs = [output, states[0]])
+        x_step_val = [[1, 2, 3, 4], [5, 6, 7, 8]]
+        context_val = [[[0.1, 0.2, 0.3, 0.4], [0.3, 0.5, 0.7, 0.2]], [[0.2, 0.1, 0.5, 0.6], [0.4, 0.3, 0.8, 0.1]]]
+        state_val = [[1, 2, 3], [0.1, 0.2, 0.3]]
+        outputs_val = f([x_step_val, context_val, state_val])
+        rnn_cell_output_val = outputs_val[1]
+        rnn_cell_output_val_ref = [[ 0.99984539, 2., 0.99115109], [ 0.9999271, 0.2, 0.92570341]]
+        self.assertTrue(np.sum(np.abs(rnn_cell_output_val - rnn_cell_output_val_ref)) < 0.0001, 'rnn_cell_output_val')
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
     unittest.main()

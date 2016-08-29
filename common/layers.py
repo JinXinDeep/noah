@@ -292,10 +292,14 @@ class MLPClassifierLayer(ComposedLayer):
                 self._layers.append(layer)
                 self._layers.append(norm)
 
-
         if self.use_sequence_input:
             layer = TimeDistributed(self.output_layer)
+        else:
+            layer = self.output_layer
+
         self._layers.append(layer)
+
+        super(MLPClassifierLayer, self).build(input_shape)
 
     def call(self, x, mask = None):
         output = x
@@ -397,6 +401,8 @@ class AttentionLayer(Layer):
             self.set_weights(self.initial_weights)
             del self.initial_weights
 
+        super(AttentionLayer, self).build(input_shapes)
+
     @staticmethod
     def _calc(s, h, W_a, U_a, v_a, tensors_to_debug = None):
         U_a_h = dot(h, U_a)  # nb_samples, time_steps, attention_context_dim
@@ -465,6 +471,8 @@ class RNNDecoderLayerBase(ComposedLayer):
     '''RNN layer decoder base class, which employs a rnn cell (re-use those defined by keras, such as GRU and LSTM), an attention mechanism, an embedding, and a MLP classifier to decode a sequence.
     '''
     def __init__(self, rnn_cell, attention, embedding, mlp_classifier, **kwargs):
+        check_and_throw_if_fail(mlp_classifier.use_sequence_input == False, "mlp_classifier must be applied to non_sequence_input")
+
         self.rnn_cell = rnn_cell
         self.attention = attention
         self.mlp_classifier = mlp_classifier
@@ -472,23 +480,35 @@ class RNNDecoderLayerBase(ComposedLayer):
         super(RNNDecoderLayerBase, self).__init__(**kwargs)
 
     def step(self, x, states, source_context):
-        h_prev = states[0]  # previous output
-        c = self.attention(K.concatenate([x, h_prev]), source_context)
-        h, _ = self.rnn_cell.step(K.concatenate([x, c]), states = [h_prev])
+        current_state = states[0]  # previous output
+        # including current input as part of the input of attention
+        c = self.attention([K.concatenate([x, current_state]), source_context])
+        # input of rnn_cell includes current attention
+        rnn_cell_step_input = K.concatenate([x, c])
+        processed_rnn_cell_step_input = K.squeeze(self.rnn_cell.preprocess_input(K.expand_dims(rnn_cell_step_input, 1)), 1)
+        h, _ = self.rnn_cell.step(processed_rnn_cell_step_input, states = states)
         output = self.mlp_classifier(h)
         return output, [h]
 
     def build(self, input_shapes):
-        # build the rnn_cell manually; for others, "call" will trigger the building automatically
+        # build the layers manually, since we are going to use these layers on non-keras tensors
         x_shape, source_context_shape = input_shapes
         attention_input_shapes = [(x_shape[0], self.embedding.output_dim + self.rnn_cell.output_dim), source_context_shape]
         self.attention.build(input_shapes = attention_input_shapes)
 
         attention_output_dim = self.attention.get_output_shape_for(attention_input_shapes)[-1]
-        rnn_cell_input_shape = (x_shape[0], self.embedding.output_dim + attention_output_dim)
+        # rnn cell requires a 3D shape, and use the last as the input_dim
+        rnn_cell_input_shape = (x_shape[0], None, self.embedding.output_dim + attention_output_dim)
         self.rnn_cell.build(rnn_cell_input_shape)
 
+        # mlp classifier
+        mlp_classifier_input_shape = (x_shape[0], self.rnn_cell.output_dim)
+        self.mlp_classifier.build(mlp_classifier_input_shape)
+
         self._layers = [self.attention, self.rnn_cell, self.mlp_classifier, self.embedding]
+
+        super(RNNDecoderLayerBase, self).build(input_shapes)
+
 
     def call(self, inputs, mask = None):
         raise NotImplementedError
@@ -532,10 +552,9 @@ class RNNDecoderLayer(RNNDecoderLayerBase):
             initial_states = self.rnn_cell.get_initial_states(input_x)
 
         constants = self.rnn_cell.get_constants(input_x)
-        preprocessed_input = self.rnn_cell.preprocess_input(input_x)
 
         last_output, outputs, states = K.rnn(lambda x, states: self.step(x, states, context),
-                                             preprocessed_input,
+                                             input_x,
                                              initial_states,
                                              go_backwards = self.rnn_cell.go_backwards,
                                              mask = mask,
@@ -575,8 +594,11 @@ class RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
             initial_input = K.squeeze(initial_input, 1)
         initial_state = K.zeros(shape = K.pack([K.shape(initial_input)[0], self.rnn_cell.attention_context_dim]))  # (nb_samples, rnn_cell_output_dim)
 
+        # initial_input is 1D tensor, 3D tensor is required
+        constants = self.rnn_cell.get_constants(K.expand_dims(K.expand_dims(initial_input)))
+
         def step(current_input, current_state, constant_context):
-            output, states = self.step(current_input, [current_state], constant_context)
+            output, states = self.step(current_input, [current_state] + constants, constant_context)
             return output, states[0]
 
         return  beam_search(initial_input, initial_state,
