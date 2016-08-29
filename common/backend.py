@@ -114,7 +114,7 @@ def beam_search(initial_input, initial_state, constant_context, embedding, step_
     output_score_tensor: a tensor with a shape of max_length, nb_samples, beam_size of type float32, representing accumulated scores of nodes
     '''
     number_of_samples = K.shape(initial_input)[0]
-    state_dim = K.shape(initial_state)[-1]
+    state_dim = K.shape(initial_state)[K.ndim(initial_state) - 1]
     current_input = K.repeat_elements(initial_input, beam_size, 0)  # shape: nb_samples*beam_size, input_dim
     current_state = K.repeat_elements(initial_state, beam_size, 0)  # shape: nb_samples*beam_size, state_dim
     output_score = K.sum(K.zeros_like(current_state), -1)  # shape: nb_samples*beam_size

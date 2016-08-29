@@ -567,12 +567,22 @@ class RNNDecoderLayer(RNNDecoderLayerBase):
 class RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
     '''Defines a RNN based decoder for prediction, using beam search.
     '''
-    def __init__(self, max_output_length, beam_size, **kwargs):
+    def __init__(self, max_output_length, beam_size, rnn_cell, attention, embedding, mlp_classifier, **kwargs):
         check_and_throw_if_fail(max_output_length > 0, "max_output_length")
-        check_and_throw_if_fail(beam_size > 0, "beam_size")
+        check_and_throw_if_fail(beam_size >= max_output_length, "beam_size")
+        self.mlp_classifier = mlp_classifier
         self.max_output_length = max_output_length
         self.beam_size = beam_size
-        super(RNNDecoderLayerWithBeamSearch, self).__init__(**kwargs)
+        super(RNNDecoderLayerWithBeamSearch, self).__init__(rnn_cell, attention, embedding, **kwargs)
+
+    def build(self, input_shapes):
+        # build the layers manually, since we are going to use these layers on non-keras tensors, which will otherwise throw exception
+        super(RNNDecoderLayerWithBeamSearch, self).build(input_shapes)
+        x_shape, _ = input_shapes
+        mlp_classifier_input_shape = (x_shape[0], self.rnn_cell.output_dim)
+        self.mlp_classifier.build(mlp_classifier_input_shape)
+        self.mlp_classifier.built = True
+        self._layers.append(self.mlp_classifier)
 
     def get_output_shape_for(self, input_shape):
         # output three tensors: output_label_id_list, prev_output_index_list and output_score_list
@@ -585,22 +595,38 @@ class RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
         initial_input, source_context = inputs
         if K.ndim(initial_input) == 2:
             initial_input = K.squeeze(initial_input, 1)
-        initial_state = K.zeros(shape = K.pack([K.shape(initial_input)[0], self.rnn_cell.attention_context_dim]))  # (nb_samples, rnn_cell_output_dim)
+
+        initial_state = self.rnn_cell. get_initial_states(K.expand_dims(K.expand_dims(initial_input)))[0]
 
         # initial_input is 1D tensor, 3D tensor is required
         constants = self.rnn_cell.get_constants(K.expand_dims(K.expand_dims(initial_input)))
 
         def step(current_input, current_state, constant_context):
-            output, states = self.step(current_input, [current_state] + constants, constant_context)
-            return output, states[0]
+            rnn_output, _ = self.step(current_input, [current_state] + constants, constant_context)
+            classifier_output = self.mlp_classifier.call(rnn_output)
+            return classifier_output, rnn_output
 
         return  beam_search(initial_input, initial_state,
                             source_context, self.embedding,
                             step_func = step,
                             beam_size = self.beam_size, max_length = self.max_output_length)
 
+    @classmethod
+    def from_config(cls, config, custom_objects = {}):
+        from keras.utils.layer_utils import layer_from_config
+        mlp_classifier = layer_from_config(config.pop('mlp_classifier'), custom_objects)
+        max_output_length = config.pop('max_output_length')
+        beam_size = config.pop('beam_size')
+        # TODO: remove repeated code
+        rnn_cell = layer_from_config(config.pop('rnn_cell'), custom_objects)
+        attention = layer_from_config(config.pop('attention'), custom_objects)
+        embedding = layer_from_config(config.pop('embedding'), custom_objects)
+        return cls(max_output_length, beam_size, rnn_cell, attention, embedding, mlp_classifier, **config)
+
     def get_config(self):
-        config = {'max_output_length': self.max_output_length,
+        config = {'mlp_classifier': {'class_name': self.mlp_classifier.__class__.__name__,
+                            'config': self.mlp_classifier.get_config()},
+                  'max_output_length': self.max_output_length,
                   'beam_size': self.beam_size,
                   }
         base_config = super(RNNDecoderLayerWithBeamSearch, self).get_config()

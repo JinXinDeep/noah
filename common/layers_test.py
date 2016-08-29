@@ -4,7 +4,7 @@ Created on Aug 26, 2016
 @author: lxh5147
 '''
 import unittest
-from layers import BiDirectionalLayer, MLPClassifierLayer, AttentionLayer, RNNDecoderLayerBase, RNNDecoderLayer
+from layers import BiDirectionalLayer, MLPClassifierLayer, AttentionLayer, RNNDecoderLayerBase, RNNDecoderLayer, RNNDecoderLayerWithBeamSearch
 import numpy as np
 import keras.backend as K
 from keras.layers import Dense, Input, GRU, Embedding
@@ -141,6 +141,32 @@ class LayersTest(unittest.TestCase):
         output_val = f([x_val, context_val])[0]
         self.assertEqual(output_val.shape, (2, 4, rnn_cell_output_dim), "output_val")
         # TODO: check value
+
+    def test_RNNDecoderLayerWithBeamSearch(self):
+        rnn_cell_output_dim = 3
+        rnn_cell = GRU(output_dim = rnn_cell_output_dim, return_sequences = True)
+        attention_context_dim = 2
+        attention = AttentionLayer(attention_context_dim = attention_context_dim)
+
+        embedding_dim = 4
+        embedding_vac_size = 5
+        embedding = Embedding (input_dim = embedding_vac_size, output_dim = embedding_dim)
+        classifier_output_layer = Dense(output_dim = embedding_vac_size, activation = 'softmax')
+        hidden_unit_numbers = [2, 3, 4]
+        hidden_unit_activation_functions = ['relu', 'relu', 'relu']
+        hidden_layers = []
+        for hidden_unit_number, hidden_unit_activation_function in zip(hidden_unit_numbers, hidden_unit_activation_functions):
+            layer = Dense(hidden_unit_number, activation = hidden_unit_activation_function)
+            hidden_layers.append(layer)
+
+        mlp_classifier = MLPClassifierLayer(classifier_output_layer, hidden_layers)
+        layer = RNNDecoderLayerWithBeamSearch(mlp_classifier = mlp_classifier, max_output_length = 2, beam_size = 3, rnn_cell = rnn_cell, attention = attention, embedding = embedding)
+        # test config: should use custom objects for custom layers
+        custom_objects = {AttentionLayer.__name__: AttentionLayer, MLPClassifierLayer.__name__: MLPClassifierLayer}
+        self.assertEqual(layer.get_config(), RNNDecoderLayerWithBeamSearch.from_config(layer.get_config(), custom_objects).get_config(), "config")
+        initial_input = Input((1,), dtype = 'int32')
+        context = Input((None, embedding_dim))
+        outputs = layer([initial_input, context])
 
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
