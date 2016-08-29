@@ -41,18 +41,18 @@ class LayersTest(unittest.TestCase):
             layer = Dense(hidden_unit_number, activation = hidden_unit_activation_function)
             hidden_layers.append(layer)
 
-        layer = MLPClassifierLayer(output_layer, hidden_layers, use_sequence_input = True)
+        layer = MLPClassifierLayer(output_layer, hidden_layers)
         # test config
         self.assertEqual(layer.get_config(), MLPClassifierLayer.from_config(layer.get_config()).get_config(), "config")
 
-        input_tensor = Input((None, 2))
+        input_tensor = Input((2,))
         output_tensor = layer(input_tensor)
-        self.assertEqual(output_tensor._keras_shape, (None, None, 4), "_keras_shape")
+        self.assertEqual(output_tensor._keras_shape, (None, 4), "_keras_shape")
 
         f = K.function(inputs = [input_tensor], outputs = [output_tensor])
-        input_tensor_value = [[[1, 2], [3, 4], [5, 6]], [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]]  # 2 samples, 3 time steps
+        input_tensor_value = [[1, 2], [0.1, 0.2]]  # 2 samples
         output_tensor_value = f([input_tensor_value])[0]
-        self.assertEqual(output_tensor_value.shape, (2, 3, 4), "output_tensor_value")
+        self.assertEqual(output_tensor_value.shape, (2, 4), "output_tensor_value")
         # TODO: check value
 
     def test_AttentionLayer(self):
@@ -125,7 +125,7 @@ class LayersTest(unittest.TestCase):
 
         embedding_dim = 4
         embedding_vac_size = 5
-        embedding = Embedding (input_dim = embedding_vac_size, output_dim = embedding_dim)
+        embedding = Embedding (input_dim = embedding_vac_size, output_dim = embedding_dim, weights = [np.array([[0, 0, 0, 0], [1, 2, 3, 4], [5, 6, 7, 8], [9, 1, 3, 4], [8, 7, 4, 2]])])
         layer = RNNDecoderLayer(rnn_cell, attention, embedding)
         # test config: should use custom objects for custom layers
         custom_objects = {AttentionLayer.__name__: AttentionLayer}
@@ -141,6 +141,7 @@ class LayersTest(unittest.TestCase):
         output_val = f([x_val, context_val])[0]
         self.assertEqual(output_val.shape, (2, 4, rnn_cell_output_dim), "output_val")
         # TODO: check value
+
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
     unittest.main()

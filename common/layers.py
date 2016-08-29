@@ -269,28 +269,24 @@ class MLPClassifierLayer(ComposedLayer):
     '''
     Represents a mlp classifier, which consists of several hidden layers followed by a softmax/or sigmoid output layer.
     '''
-    def __init__(self, output_layer, hidden_layers = None, use_sequence_input = True, **kwargs):
+    def __init__(self, output_layer, hidden_layers = None, **kwargs):
         '''
         # Parameters
         ----------
         output_layer: output layer for classification, with sigmoid or softmax as activation function
         hidden_layers: hidden layers
-        use_sequence_input: the last two dimensions of the input has a shape of time_steps, input_dim, and the time_steps must be specified (required by unpack)
         '''
         self.output_layer = output_layer
         self.hidden_layers = hidden_layers
-        self.use_sequence_input = use_sequence_input
         super(MLPClassifierLayer, self).__init__(**kwargs)
 
     def build(self, input_shape):
         if self.hidden_layers:
             for layer in self.hidden_layers:
-                if self.use_sequence_input:
-                    layer = TimeDistributed(layer)
                 layer.build(input_shape)
                 layer.built = True
-
                 input_shape = layer.get_output_shape_for(input_shape)
+
                 norm = BatchNormalization(mode = 2)
                 norm.build(input_shape)
                 norm.built = True
@@ -299,13 +295,10 @@ class MLPClassifierLayer(ComposedLayer):
                 self._layers.append(layer)
                 self._layers.append(norm)
 
-        if self.use_sequence_input:
-            layer = TimeDistributed(self.output_layer)
-        else:
-            layer = self.output_layer
-
+        layer = self.output_layer
         layer.build(input_shape)
         layer.built = True
+
         self._layers.append(layer)
 
         super(MLPClassifierLayer, self).build(input_shape)
@@ -326,8 +319,7 @@ class MLPClassifierLayer(ComposedLayer):
         else:
             hidden_layers_config = None
         config = {'output_layer': {'class_name': self.output_layer.__class__.__name__, 'config': self.output_layer.get_config()},
-                  'hidden_layers': hidden_layers_config,
-                  'use_sequence_input':self.use_sequence_input
+                  'hidden_layers': hidden_layers_config
                   }
         base_config = super(MLPClassifierLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -341,8 +333,7 @@ class MLPClassifierLayer(ComposedLayer):
             hidden_layers = [layer_from_config(hidden_layer_config) for hidden_layer_config in hidden_layers_config]
         else:
             hidden_layers = None
-        use_sequence_input = config.pop('use_sequence_input')
-        return cls(output_layer, hidden_layers, use_sequence_input, **config)
+        return cls(output_layer, hidden_layers, **config)
 
 class AttentionLayer(Layer):
     '''
@@ -489,7 +480,7 @@ class RNNDecoderLayerBase(ComposedLayer):
         current_state = states[0]  # previous output
         # including current input as part of the input of attention
         attention_input = K.concatenate([x, current_state])
-        c = self.attention([attention_input, source_context])
+        c = self.attention.call([attention_input, source_context])
         # input of rnn_cell includes current attention
         rnn_cell_step_input = K.concatenate([x, c])
         processed_rnn_cell_step_input = K.squeeze(self.rnn_cell.preprocess_input(K.expand_dims(rnn_cell_step_input, 1)), 1)
