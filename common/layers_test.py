@@ -4,7 +4,7 @@ Created on Aug 26, 2016
 @author: lxh5147
 '''
 import unittest
-from layers import BiDirectionalLayer, MLPClassifierLayer, AttentionLayer, RNNDecoderLayerBase
+from layers import BiDirectionalLayer, MLPClassifierLayer, AttentionLayer, RNNDecoderLayerBase, RNNDecoderLayer
 import numpy as np
 import keras.backend as K
 from keras.layers import Dense, Input, GRU, Embedding
@@ -87,7 +87,7 @@ class LayersTest(unittest.TestCase):
 
     def test_RNNDecoderLayerBase(self):
         rnn_cell_output_dim = 3
-        rnn_cell = GRU(output_dim = rnn_cell_output_dim)
+        rnn_cell = GRU(output_dim = rnn_cell_output_dim, return_sequences = True)
         attention_context_dim = 2
         attention = AttentionLayer(attention_context_dim = attention_context_dim)
 
@@ -102,7 +102,7 @@ class LayersTest(unittest.TestCase):
             layer = Dense(hidden_unit_number, activation = hidden_unit_activation_function)
             hidden_layers.append(layer)
 
-        mlp_classifier = MLPClassifierLayer(classifier_output_layer, hidden_layers, use_sequence_input = False)
+        mlp_classifier = MLPClassifierLayer(classifier_output_layer, hidden_layers, use_sequence_input = True)
         layer = RNNDecoderLayerBase(rnn_cell, attention, embedding, mlp_classifier)
         # test config: should use custom objects for custom layers
         custom_objects = {AttentionLayer.__name__: AttentionLayer, MLPClassifierLayer.__name__:MLPClassifierLayer}
@@ -122,9 +122,39 @@ class LayersTest(unittest.TestCase):
         context_val = [[[0.1, 0.2, 0.3, 0.4], [0.3, 0.5, 0.7, 0.2]], [[0.2, 0.1, 0.5, 0.6], [0.4, 0.3, 0.8, 0.1]]]
         state_val = [[1, 2, 3], [0.1, 0.2, 0.3]]
         outputs_val = f([x_step_val, context_val, state_val])
-        rnn_cell_output_val = outputs_val[1]
+        rnn_cell_output_val = outputs_val[0]
         rnn_cell_output_val_ref = [[ 0.99984539, 2., 0.99115109], [ 0.9999271, 0.2, 0.92570341]]
         self.assertTrue(np.sum(np.abs(rnn_cell_output_val - rnn_cell_output_val_ref)) < 0.0001, 'rnn_cell_output_val')
+
+    def test_RNNDecoderLayer(self):
+        rnn_cell_output_dim = 3
+        rnn_cell = GRU(output_dim = rnn_cell_output_dim, return_sequences = True)
+        attention_context_dim = 2
+        attention = AttentionLayer(attention_context_dim = attention_context_dim)
+
+        embedding_dim = 4
+        embedding_vac_size = 5
+        embedding = Embedding (input_dim = embedding_vac_size, output_dim = embedding_dim)
+        classifier_output_layer = Dense(output_dim = embedding_vac_size, activation = 'softmax')
+        hidden_unit_numbers = [2, 3, 4]
+        hidden_unit_activation_functions = ['relu', 'relu', 'relu']
+        hidden_layers = []
+        for hidden_unit_number, hidden_unit_activation_function in zip(hidden_unit_numbers, hidden_unit_activation_functions):
+            layer = Dense(hidden_unit_number, activation = hidden_unit_activation_function)
+            hidden_layers.append(layer)
+
+        mlp_classifier = MLPClassifierLayer(classifier_output_layer, hidden_layers, use_sequence_input = True)
+        layer = RNNDecoderLayer(rnn_cell, attention, embedding, mlp_classifier)
+        # test config: should use custom objects for custom layers
+        custom_objects = {AttentionLayer.__name__: AttentionLayer, MLPClassifierLayer.__name__:MLPClassifierLayer}
+        self.assertEqual(layer.get_config(), RNNDecoderLayer.from_config(layer.get_config(), custom_objects).get_config(), "config")
+
+        x = K.placeholder((None, None))
+        context = K.placeholder((None, None, embedding_dim))
+        outputs = layer([x, context])
+        f = K.function(inputs = [x, context ], outputs = [outputs])
+
+
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
     unittest.main()

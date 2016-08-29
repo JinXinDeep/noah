@@ -81,8 +81,7 @@ class TimeDistributed(Wrapper):
                 output = self.layer.call(x)
                 return output, []
 
-            _, outputs, _ = K.rnn(step, X,
-                                                 initial_states = [])
+            _, outputs, _ = K.rnn(step, X, initial_states = [])
             y = outputs
         else:
             # no batch size specified, therefore the layer will be able
@@ -288,7 +287,15 @@ class MLPClassifierLayer(ComposedLayer):
             for layer in self.hidden_layers:
                 if self.use_sequence_input:
                     layer = TimeDistributed(layer)
+                layer.build(input_shape)
+                layer.built = True
+                input_shape = layer.get_output_shape_for(input_shape)
+
                 norm = BatchNormalization(mode = 2)
+                norm.build(input_shape)
+                norm.built = True
+                input_shape = norm.get_output_shape_for(input_shape)
+
                 self._layers.append(layer)
                 self._layers.append(norm)
 
@@ -297,6 +304,8 @@ class MLPClassifierLayer(ComposedLayer):
         else:
             layer = self.output_layer
 
+        layer.build(input_shape)
+        layer.built = True
         self._layers.append(layer)
 
         super(MLPClassifierLayer, self).build(input_shape)
@@ -471,7 +480,7 @@ class RNNDecoderLayerBase(ComposedLayer):
     '''RNN layer decoder base class, which employs a rnn cell (re-use those defined by keras, such as GRU and LSTM), an attention mechanism, an embedding, and a MLP classifier to decode a sequence.
     '''
     def __init__(self, rnn_cell, attention, embedding, mlp_classifier, **kwargs):
-        check_and_throw_if_fail(mlp_classifier.use_sequence_input == False, "mlp_classifier must be applied to non_sequence_input")
+        check_and_throw_if_fail(mlp_classifier.use_sequence_input == rnn_cell.return_sequences, "mlp_classifier.use_sequence_input must be consistent with rnn_cell.return_sequences")
 
         self.rnn_cell = rnn_cell
         self.attention = attention
@@ -482,28 +491,35 @@ class RNNDecoderLayerBase(ComposedLayer):
     def step(self, x, states, source_context):
         current_state = states[0]  # previous output
         # including current input as part of the input of attention
-        c = self.attention([K.concatenate([x, current_state]), source_context])
+        attention_input = K.concatenate([x, current_state])
+        c = self.attention([attention_input, source_context])
         # input of rnn_cell includes current attention
         rnn_cell_step_input = K.concatenate([x, c])
         processed_rnn_cell_step_input = K.squeeze(self.rnn_cell.preprocess_input(K.expand_dims(rnn_cell_step_input, 1)), 1)
         h, _ = self.rnn_cell.step(processed_rnn_cell_step_input, states = states)
-        output = self.mlp_classifier(h)
-        return output, [h]
+        return h, [h]
 
     def build(self, input_shapes):
-        # build the layers manually, since we are going to use these layers on non-keras tensors
+        # build the layers manually, since we are going to use these layers on non-keras tensors, which will otherwise throw exception
         x_shape, source_context_shape = input_shapes
         attention_input_shapes = [(x_shape[0], self.embedding.output_dim + self.rnn_cell.output_dim), source_context_shape]
         self.attention.build(input_shapes = attention_input_shapes)
+        self.attention.built = True
 
         attention_output_dim = self.attention.get_output_shape_for(attention_input_shapes)[-1]
         # rnn cell requires a 3D shape, and use the last as the input_dim
         rnn_cell_input_shape = (x_shape[0], None, self.embedding.output_dim + attention_output_dim)
         self.rnn_cell.build(rnn_cell_input_shape)
+        self.rnn_cell.built = True
 
         # mlp classifier
-        mlp_classifier_input_shape = (x_shape[0], self.rnn_cell.output_dim)
+        if self.mlp_classifier.use_sequence_input:
+            mlp_classifier_input_shape = (x_shape[0], x_shape[1], self.rnn_cell.output_dim)
+        else:
+            mlp_classifier_input_shape = (x_shape[0], self.rnn_cell.output_dim)
+
         self.mlp_classifier.build(mlp_classifier_input_shape)
+        self.mlp_classifier.built = True
 
         self._layers = [self.attention, self.rnn_cell, self.mlp_classifier, self.embedding]
 
@@ -567,9 +583,9 @@ class RNNDecoderLayer(RNNDecoderLayerBase):
                 self.updates.append((self.rnn_cell.states[i], states[i]))
 
         if self.rnn_cell.return_sequences:
-            return outputs
+            return self.mlp_classifier(outputs)
         else:
-            return last_output
+            return self.mlp_classifier(last_output)
 
 class RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
     '''Defines a RNN based decoder for prediction, using beam search.
