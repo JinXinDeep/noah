@@ -12,7 +12,7 @@ from keras.layers.core import Flatten, Reshape
 from ..common import check_and_throw_if_fail, trim_right_padding, BiDirectionalLayer, AttentionLayer, RNNDecoderLayerWithBeamSearch, GRUCell, RNNDecoderLayer, MLPClassifierLayer, categorical_crossentropy_ex
 
 
-def build_model(max_timesteps, input_dim, recurrent_input_lengths,
+def build_rnn_search_model(max_timesteps, input_dim, recurrent_input_lengths,
                  target_vacabuary_size, target_embedding_dim,
                  target_initia_embedding, recurrent_output_dim, max_output_length, output_dim, hidden_unit_numbers, hidden_unit_activation_functions,
                  max_output_length, beam_size, number_of_output_sequence):

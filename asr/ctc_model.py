@@ -73,7 +73,7 @@ def attach_ctc_beam_decodeder_to_model(model):
     output = ctc_beam_search_decoder(output, sequence_length, beam_width=100, top_paths=1, merge_repeated=True)
     return Model(input=model.input, output=output)
 
-def build_model(max_timesteps, input_dim, conv_output_dims, conv_filter_lengths, recurrent_output_dims, lookahead_conv_output_dims, lookahead_conv_filter_lengths, dense_output_dims, softmax_output_dim):
+def build_rnn_search_model(max_timesteps, input_dim, conv_output_dims, conv_filter_lengths, recurrent_output_dims, lookahead_conv_output_dims, lookahead_conv_filter_lengths, dense_output_dims, softmax_output_dim):
     # input get_shape: batch_size, timesteps, input_dim
     spectrogram = Input(get_shape=(max_timesteps, input_dim))
     output = spectrogram
