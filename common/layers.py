@@ -60,7 +60,7 @@ class TimeDistributed(Wrapper):
 
     def build(self, input_shape):
         assert len(input_shape) >= 3
-        self.input_spec = [InputSpec(shape = input_shape)]
+        self.input_spec = [InputSpec(shape=input_shape)]
         child_input_shape = (input_shape[0],) + input_shape[2:]
         if not self.layer.built:
             self.layer.build(child_input_shape)
@@ -73,7 +73,7 @@ class TimeDistributed(Wrapper):
         timesteps = input_shape[1]
         return (child_output_shape[0], timesteps) + child_output_shape[1:]
 
-    def call(self, X, mask = None):
+    def call(self, X, mask=None):
         input_shape = self.input_spec[0].shape
         if input_shape[0]:
             # batch size matters, use rnn-based implementation
@@ -81,7 +81,7 @@ class TimeDistributed(Wrapper):
                 output = self.layer.call(x)
                 return output, []
 
-            _, outputs, _ = K.rnn(step, X, initial_states = [])
+            _, outputs, _ = K.rnn(step, X, initial_states=[])
             y = outputs
         else:
             # no batch size specified, therefore the layer will be able
@@ -90,8 +90,8 @@ class TimeDistributed(Wrapper):
             input_length = input_shape[1]
             if not input_length:
                 input_length = K.shape(X)[1]
-            X = K.reshape(X, (-1,) + input_shape[2:])  # (nb_samples * timesteps, ...)
-            y = self.layer.call(X)  # (nb_samples * timesteps, ...)
+            X = K.reshape(X, (-1,) + input_shape[2:])    # (nb_samples * timesteps, ...)
+            y = self.layer.call(X)    # (nb_samples * timesteps, ...)
             # (nb_samples, timesteps, ...)
             output_shape = self.get_output_shape_for(input_shape)
             y = K.reshape(y, (-1, input_length) + output_shape[2:])
@@ -123,7 +123,7 @@ class ComposedLayer(Layer):
         self._trainable_weights = []
         self._non_trainable_weights = []
         self._regularizers = []
-        self._constraints = {}  # dict {tensor: constraint instance}
+        self._constraints = {}    # dict {tensor: constraint instance}
         self.built = False
 
         # these properties should be set by the user via keyword arguments.
@@ -235,11 +235,11 @@ class ComposedLayer(Layer):
 class BiDirectionalLayer(Layer):
     '''Defines a layer that combines one input sequence from left to right and the other sequence from right to left.
     '''
-    def __init__(self, time_step_axis = 1, **kwargs):
-        self.time_step_axis = time_step_axis  # along which axis to reverse
+    def __init__(self, time_step_axis=1, **kwargs):
+        self.time_step_axis = time_step_axis    # along which axis to reverse
         super(BiDirectionalLayer, self).__init__(**kwargs)
 
-    def call(self, inputs, mask = None):
+    def call(self, inputs, mask=None):
         """
         # Parameters
         ----------
@@ -255,7 +255,7 @@ class BiDirectionalLayer(Layer):
         right_to_left = reverse(right_to_left)
         if self.time_step_axis != 0:
             right_to_left = K.permute_dimensions(right_to_left, axes)
-        return K.concatenate([left_to_right, right_to_left], axis = -1)
+        return K.concatenate([left_to_right, right_to_left], axis=-1)
 
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0][:-1] + (input_shapes[0][-1] + input_shapes[1][-1],)
@@ -269,7 +269,7 @@ class MLPClassifierLayer(ComposedLayer):
     '''
     Represents a mlp classifier, which consists of several hidden layers followed by a softmax/or sigmoid output layer.
     '''
-    def __init__(self, output_layer, hidden_layers = None, **kwargs):
+    def __init__(self, output_layer, hidden_layers=None, **kwargs):
         '''
         # Parameters
         ----------
@@ -287,7 +287,7 @@ class MLPClassifierLayer(ComposedLayer):
                 layer.built = True
                 input_shape = layer.get_output_shape_for(input_shape)
 
-                norm = BatchNormalization(mode = 2)
+                norm = BatchNormalization(mode=2)
                 norm.build(input_shape)
                 norm.built = True
 
@@ -303,7 +303,7 @@ class MLPClassifierLayer(ComposedLayer):
 
         super(MLPClassifierLayer, self).build(input_shape)
 
-    def call(self, x, mask = None):
+    def call(self, x, mask=None):
         output = x
         for layer in self._layers:
             output = layer(output)
@@ -339,9 +339,9 @@ class AttentionLayer(Layer):
     '''
     Calculates a weighted sum tensor from the given input tensors, according to http://nlp.ict.ac.cn/Admin/kindeditor/attached/file/20141011/20141011133445_31922.pdf
     '''
-    def __init__(self, attention_context_dim, weights = None, init_W_a = 'glorot_uniform', init_U_a = 'glorot_uniform', init_v_a = 'uniform',
-                 W_a_regularizer = None, U_a_regularizer = None, v_a_regularizer = None,
-                 W_a_constraint = None, U_a_constraint = None, v_a_constraint = None, **kwargs):
+    def __init__(self, attention_context_dim, weights=None, init_W_a='glorot_uniform', init_U_a='glorot_uniform', init_v_a='uniform',
+                 W_a_regularizer=None, U_a_regularizer=None, v_a_regularizer=None,
+                 W_a_constraint=None, U_a_constraint=None, v_a_constraint=None, **kwargs):
         '''
         # Parameters
         ----------
@@ -404,9 +404,9 @@ class AttentionLayer(Layer):
         super(AttentionLayer, self).build(input_shapes)
 
     @staticmethod
-    def _calc(s, h, W_a, U_a, v_a, tensors_to_debug = None):
-        U_a_h = dot(h, U_a)  # nb_samples, time_steps, attention_context_dim
-        W_a_s = K.expand_dims(dot(s, W_a), 1)  # nb_samples, 1, attention_context_dim
+    def _calc(s, h, W_a, U_a, v_a, tensors_to_debug=None):
+        U_a_h = dot(h, U_a)    # nb_samples, time_steps, attention_context_dim
+        W_a_s = K.expand_dims(dot(s, W_a), 1)    # nb_samples, 1, attention_context_dim
         if tensors_to_debug is not None:
             tensors_to_debug.append(W_a_s)
             tensors_to_debug.append(U_a_h)
@@ -415,11 +415,11 @@ class AttentionLayer(Layer):
         if tensors_to_debug is not None:
             tensors_to_debug.append(W_U_sum)
 
-        e = K.tanh (W_U_sum)  # nb_samples, time_steps, attention_context_dim
+        e = K.tanh (W_U_sum)    # nb_samples, time_steps, attention_context_dim
         if tensors_to_debug is not None:
             tensors_to_debug.append(e)
 
-        e = inner_product(e, v_a)  # nb_samples, time_steps
+        e = inner_product(e, v_a)    # nb_samples, time_steps
         if tensors_to_debug is not None:
             tensors_to_debug.append(e)
 
@@ -427,23 +427,23 @@ class AttentionLayer(Layer):
         if tensors_to_debug is not None:
             tensors_to_debug.append(e)
 
-        e_sum = K.sum(e, -1, keepdims = True)  # nb_samples, 1
+        e_sum = K.sum(e, -1, keepdims=True)    # nb_samples, 1
         if tensors_to_debug is not None:
             tensors_to_debug.append(e_sum)
 
-        a = e / e_sum  # nb_samples, time_steps
+        a = e / e_sum    # nb_samples, time_steps
         if tensors_to_debug is not None:
             tensors_to_debug.append(a)
 
-        a = K.expand_dims(a)  # nb_samples, time_steps, 1
-        c = a * h  # nb_samples, time_steps, h_input_dim
+        a = K.expand_dims(a)    # nb_samples, time_steps, 1
+        c = a * h    # nb_samples, time_steps, h_input_dim
         if tensors_to_debug is not None:
             tensors_to_debug.append(c)
 
-        c = K.sum(c, axis = 1)  # nb_samples, h_input_dim
+        c = K.sum(c, axis=1)    # nb_samples, h_input_dim
         return c
 
-    def call(self, inputs, mask = None):
+    def call(self, inputs, mask=None):
         # s: nb_sample,input_dim
         # h: nb_samples,time_steps, h_input_dim
         s, h = inputs
@@ -477,21 +477,21 @@ class RNNDecoderLayerBase(ComposedLayer):
         super(RNNDecoderLayerBase, self).__init__(**kwargs)
 
     def step(self, x, states, source_context):
-        current_state = states[0]  # previous output
+        current_state = states[0]    # previous output
         # including current input as part of the input of attention
         attention_input = K.concatenate([x, current_state])
         c = self.attention.call([attention_input, source_context])
         # input of rnn_cell includes current attention
         rnn_cell_step_input = K.concatenate([x, c])
         processed_rnn_cell_step_input = K.squeeze(self.rnn_cell.preprocess_input(K.expand_dims(rnn_cell_step_input, 1)), 1)
-        h, _ = self.rnn_cell.step(processed_rnn_cell_step_input, states = states)
+        h, _ = self.rnn_cell.step(processed_rnn_cell_step_input, states=states)
         return h, [h]
 
     def build(self, input_shapes):
         # build the layers manually, since we are going to use these layers on non-keras tensors, which will otherwise throw exception
         x_shape, source_context_shape = input_shapes
         attention_input_shapes = [(x_shape[0], self.embedding.output_dim + self.rnn_cell.output_dim), source_context_shape]
-        self.attention.build(input_shapes = attention_input_shapes)
+        self.attention.build(input_shapes=attention_input_shapes)
         self.attention.built = True
 
         attention_output_dim = self.attention.get_output_shape_for(attention_input_shapes)[-1]
@@ -504,7 +504,7 @@ class RNNDecoderLayerBase(ComposedLayer):
 
         super(RNNDecoderLayerBase, self).build(input_shapes)
 
-    def call(self, inputs, mask = None):
+    def call(self, inputs, mask=None):
         raise NotImplementedError
 
     def get_config(self):
@@ -519,7 +519,7 @@ class RNNDecoderLayerBase(ComposedLayer):
         return dict(list(base_config.items()) + list(config.items()))
 
     @classmethod
-    def from_config(cls, config, custom_objects = {}):
+    def from_config(cls, config, custom_objects={}):
         from keras.utils.layer_utils import layer_from_config
         rnn_cell = layer_from_config(config.pop('rnn_cell'), custom_objects)
         attention = layer_from_config(config.pop('attention'), custom_objects)
@@ -533,7 +533,7 @@ class RNNDecoderLayer(RNNDecoderLayerBase):
         input_shape, _ = input_shapes
         return (input_shape[0], input_shape[1], self.rnn_cell.output_dim)
 
-    def call(self, inputs, mask = None):
+    def call(self, inputs, mask=None):
         input_x, context = inputs
         if mask: input_x_mask = mask[0]
 
@@ -549,10 +549,10 @@ class RNNDecoderLayer(RNNDecoderLayerBase):
         last_output, outputs, states = K.rnn(lambda x, states: self.step(x, states, context),
                                              input_x,
                                              initial_states,
-                                             go_backwards = self.rnn_cell.go_backwards,
-                                             mask = input_x_mask,
-                                             constants = constants,
-                                             unroll = self.rnn_cell.unroll)
+                                             go_backwards=self.rnn_cell.go_backwards,
+                                             mask=input_x_mask,
+                                             constants=constants,
+                                             unroll=self.rnn_cell.unroll)
 
         if self.rnn_cell.stateful:
             self.updates = []
@@ -569,13 +569,15 @@ class RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
     '''
     def __init__(self, max_output_length, beam_size, rnn_cell, attention, embedding, mlp_classifier, **kwargs):
         check_and_throw_if_fail(max_output_length > 0, "max_output_length")
-        check_and_throw_if_fail(beam_size >= max_output_length, "beam_size")
+        check_and_throw_if_fail(beam_size > 0, "beam_size")
         self.mlp_classifier = mlp_classifier
         self.max_output_length = max_output_length
         self.beam_size = beam_size
         super(RNNDecoderLayerWithBeamSearch, self).__init__(rnn_cell, attention, embedding, **kwargs)
 
     def build(self, input_shapes):
+        # if nb_samples is not None, we will need to update the nb_samples to nb_samples*beam_size
+        input_shapes = [input_shape if input_shape[0] is None or input_shape[0] == -1  else [input_shape[0] * self.beam_size] + input_shape[1:]  for input_shape in input_shapes]
         # build the layers manually, since we are going to use these layers on non-keras tensors, which will otherwise throw exception
         super(RNNDecoderLayerWithBeamSearch, self).build(input_shapes)
         x_shape, _ = input_shapes
@@ -584,22 +586,25 @@ class RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
         self.mlp_classifier.built = True
         self._layers.append(self.mlp_classifier)
 
-    def get_output_shape_for(self, input_shape):
+    def get_output_shape_for(self, input_shapes):
         # output three tensors: output_label_id_list, prev_output_index_list and output_score_list
-        nb_samples = input_shape[0]
-        return (self.max_output_length, nb_samples, self.beam_size), \
+        nb_samples = input_shapes[0][0]
+        # returning a list instead of a tuple of tensor shapes, required by keras
+        return [(self.max_output_length, nb_samples, self.beam_size), \
                (self.max_output_length, nb_samples, self.beam_size), \
-               (self.max_output_length, nb_samples, self.beam_size)
+               (self.max_output_length, nb_samples, self.beam_size)]
 
-    def call(self, inputs, mask = None):
+    def call(self, inputs, mask=None):
         initial_input, source_context = inputs
         if K.ndim(initial_input) == 2:
             initial_input = K.squeeze(initial_input, 1)
 
-        initial_state = self.rnn_cell. get_initial_states(K.expand_dims(K.expand_dims(initial_input)))[0]
+        initial_input = self.embedding(initial_input)
+        # initial_input is 2D tensor: nb_samples, input_dim, convert to 3D tensor: nb_samples,1,input_dim
+        initial_state = self.rnn_cell. get_initial_states(K.expand_dims(initial_input, 1))[0]
 
-        # initial_input is 1D tensor, 3D tensor is required
-        constants = self.rnn_cell.get_constants(K.expand_dims(K.expand_dims(initial_input)))
+        # initial_input is 2D tensor, 3D tensor is required
+        constants = self.rnn_cell.get_constants(K.expand_dims(initial_input, 1))
 
         def step(current_input, current_state, constant_context):
             rnn_output, _ = self.step(current_input, [current_state] + constants, constant_context)
@@ -608,11 +613,15 @@ class RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
 
         return  beam_search(initial_input, initial_state,
                             source_context, self.embedding,
-                            step_func = step,
-                            beam_size = self.beam_size, max_length = self.max_output_length)
+                            step_func=step,
+                            beam_size=self.beam_size, max_length=self.max_output_length)
+
+    def compute_mask(self, input_tensors, input_masks):
+        # mask is not supported, ignore
+        return [None, None, None]
 
     @classmethod
-    def from_config(cls, config, custom_objects = {}):
+    def from_config(cls, config, custom_objects={}):
         from keras.utils.layer_utils import layer_from_config
         mlp_classifier = layer_from_config(config.pop('mlp_classifier'), custom_objects)
         max_output_length = config.pop('max_output_length')
