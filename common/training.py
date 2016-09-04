@@ -50,13 +50,13 @@ if K._BACKEND == 'tensorflow':
         return averaged_training_updates
 
     def convert_to_model_with_parallel_training(model, devices):
+        # no state supported when trained on multiple devices
         assert not model.state_updates
 
+        # all models share the same parameters
         models = [model]
 
         for _ in range(1, len(devices)):
-            # split inputs
-
             cloned_inputs = [_clone_input(i) for i in model.inputs]
             cloned_outputs = model(cloned_inputs)
             models.append(Model(input = cloned_inputs, output = cloned_outputs))
@@ -69,6 +69,7 @@ if K._BACKEND == 'tensorflow':
 
         def _make_train_function():
             inputs = []
+            # shape: nb_inputs*nb_models
             for model in models:
                 inputs += model.inputs
             for model in models:
@@ -83,7 +84,7 @@ if K._BACKEND == 'tensorflow':
             trainable_weights = collect_trainable_weights(model)
             training_updates = None
 
-            # temporally override K.update
+            # hack: override K.update to return a tuple (p,new_p) for each update
             K_update = K.update
             def _update(x, new_x):
                 return (x, new_x)
@@ -98,24 +99,21 @@ if K._BACKEND == 'tensorflow':
                         training_updates += cur_training_updates
             # restore K.update
             K.update = K_update
-
+            # in case multiple devices want to update the same tensor, e.g., the shared weight, use the averaged tensor
             training_updates = _get_averaged_updates(trainable_weights, training_updates)
-            # weights will be updated as the averaged weights
-            updates = training_updates
-
+            # collect outputs
             outputs = []
-
             for model in models:
                 outputs.append(model.total_loss)
                 outputs.append(model.metrics_tensors)
 
-            # returns loss and metrics. Updates weights at each call.
             f = K.function(inputs,
                               outputs = outputs,
-                              updates = updates,
+                              updates = training_updates,
                               **model._function_kwargs)
 
             def _f (inputs):
+                # adapt the inputs passed from model for f
                 n = len(devices)
                 expanded_inputs = []
 
@@ -132,7 +130,7 @@ if K._BACKEND == 'tensorflow':
                     end = start + len(model.sample_weights)
                     expanded_inputs = _expand_for_multiple_models (inputs[start: end ], n)
 
-                return f(expanded_inputs + inputs[:end])
+                return f(expanded_inputs + inputs[end:])
 
             return _f
 
