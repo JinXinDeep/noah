@@ -10,6 +10,7 @@ import keras.backend as K
 
 from common import get_k_best_from_lattice, BiDirectionalLayer, AttentionLayer, RNNDecoderLayer, RNNDecoderLayerWithBeamSearch, MLPClassifierLayer, TimeDistributed, categorical_crossentropy_ex, convert_to_model_with_parallel_training
 import numpy as np
+from nltk.translate.bleu_score import corpus_bleu
 
 def build_rnn_search_model(source_vacabuary_size,
                            source_embedding_dim,
@@ -168,8 +169,6 @@ def _calc_bleu(predict, reference, sample_weight = None, bos = None, eos = None)
     predict_sentence_list = [norm_sentence(sentence, bos, eos) for sentence in predict]
     reference_sentence_list = [ [norm_sentence(sentence, bos, eos) for sentence in reference_sentences] for reference_sentences in reference ]
     # TODO: if it is a real concern to introduce dependency on nltk, we will re-implement BLEU
-    from nltk.translate.bleu_score import corpus_bleu
-
     return corpus_bleu(list_of_references = reference_sentence_list,
                         hypotheses = predict_sentence_list,
                         weights = (0.25, 0.25, 0.25, 0.25),  # from 1-gram to 4-gram
