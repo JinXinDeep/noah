@@ -138,3 +138,7 @@ if K._BACKEND == 'tensorflow':
         model._make_train_function = _make_train_function
 
         return model
+else:
+    def convert_to_model_with_parallel_training(model, devices):
+        # not supported
+        return model
