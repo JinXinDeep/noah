@@ -8,7 +8,7 @@ from keras.models import Model
 from keras.layers import Input, GRU, Embedding, Dense
 import keras.backend as K
 
-from common import get_k_best_from_lattice, BiDirectionalLayer, AttentionLayer, RNNDecoderLayer, RNNDecoderLayerWithBeamSearch, MLPClassifierLayer, TimeDistributed, categorical_crossentropy_ex
+from common import get_k_best_from_lattice, BiDirectionalLayer, AttentionLayer, RNNDecoderLayer, RNNDecoderLayerWithBeamSearch, MLPClassifierLayer, TimeDistributed, categorical_crossentropy_ex, convert_to_model_with_parallel_training
 import numpy as np
 
 def build_rnn_search_model(source_vacabuary_size,
@@ -24,7 +24,8 @@ def build_rnn_search_model(source_vacabuary_size,
                            decoder_hidden_unit_activation_functions,
                            optimizer = 'rmsprop',
                            beam_search_max_output_length,
-                           beam_size):
+                           beam_size,
+                           devices = None):
 
     # TODO: support weight regularizer
 
@@ -66,8 +67,11 @@ def build_rnn_search_model(source_vacabuary_size,
 
 
     rnn_search_model = Model(input = [source_word, decoder_input_sequence], output = time_distributed_mlp_classifier_output)
-    # TODO: try other loss, such as importance sampling based loss, e.g., sampled_softmax_loss (this will need to extend Keras model, which assumes that the loss function does not hold any trainable parameters
+    # training with multiple devices
+    if devices:
+        rnn_search_model = convert_to_model_with_parallel_training(rnn_search_model, devices)
 
+    # TODO: try other loss, such as importance sampling based loss, e.g., sampled_softmax_loss (this will need to extend Keras model, which assumes that the loss function does not hold any trainable parameters
     rnn_search_model.compile(optimizer = optimizer, loss = categorical_crossentropy_ex, metrics = ['accuracy'])
 
     beam_search_initial_input = Input(get_shape = (1,))
@@ -90,7 +94,6 @@ def train(rnn_search_model,
           max_q_size = 10,
           nb_worker = 1,
           pickle_safe = False):
-
     return rnn_search_model.fit_generator(generator,
                                           samples_per_epoch, nb_epoch,
                                           verbose,
@@ -171,5 +174,4 @@ def _calc_bleu(predict, reference, sample_weight = None, bos = None, eos = None)
                         hypotheses = predict_sentence_list,
                         weights = (0.25, 0.25, 0.25, 0.25),  # from 1-gram to 4-gram
                         smoothing_function = None)
-
 
