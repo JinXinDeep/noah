@@ -95,8 +95,6 @@ class TimeDistributed(Wrapper):
             # (nb_samples, timesteps, ...)
             output_shape = self.get_output_shape_for(input_shape)
             y = K.reshape(y, (-1, input_length) + output_shape[2:])
-        if mask:
-            y = K.expand_dims(mask) * y
         return y
 
 #================================end of overridden layers========================================#

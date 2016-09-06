@@ -8,7 +8,7 @@ from keras.models import Model
 from keras.layers import Input, GRU, Embedding, Dense, Dropout
 import keras.backend as K
 
-from common import get_k_best_from_lattice, BiDirectionalLayer, AttentionLayer, RNNDecoderLayer, RNNDecoderLayerWithBeamSearch, MLPClassifierLayer, TimeDistributed, categorical_crossentropy_ex, convert_to_model_with_parallel_training
+from common import get_k_best_from_lattice, BiDirectionalLayer, AttentionLayer, RNNDecoderLayer, RNNDecoderLayerWithBeamSearch, MLPClassifierLayer, TimeDistributed, convert_to_model_with_parallel_training
 import numpy as np
 from nltk.translate.bleu_score import corpus_bleu
 
@@ -39,6 +39,7 @@ def build_rnn_search_model(source_vacabuary_size,
     source_embedding = Embedding(source_vacabuary_size, source_embedding_dim, weights = [source_initia_embedding])
     # apply embedding
     encoder_output = source_embedding(source_word)
+
     # multiple bi-directional rnn layers
     for  encoder_rnn_output_dim in  encoder_rnn_output_dim_list:
         recurrent_left_to_right = GRU(encoder_rnn_output_dim, return_sequences = True)
@@ -76,7 +77,7 @@ def build_rnn_search_model(source_vacabuary_size,
 
     time_distributed_mlp_classifier = TimeDistributed(mlp_classifier)
     time_distributed_mlp_classifier_output = time_distributed_mlp_classifier(rnn_decoder_output, mask = decoder_input_sequence_mask)
-
+    # output and its mask will will be used to generate proper loss function by the optimizer
     rnn_search_model = Model(input = [source_word, source_word_mask, decoder_input_sequence, decoder_input_sequence_mask], output = time_distributed_mlp_classifier_output)
     # training with multiple devices
     if devices:
@@ -84,7 +85,7 @@ def build_rnn_search_model(source_vacabuary_size,
 
     # TODO: try other loss, such as importance sampling based loss, e.g., sampled_softmax_loss (this will need to extend Keras model, which assumes that the loss function does not hold any trainable parameters
     # TODO: see if we need to apply constrains on gradient
-    rnn_search_model.compile(optimizer = optimizer, loss = categorical_crossentropy_ex, metrics = ['accuracy'])
+    rnn_search_model.compile(optimizer = optimizer, loss = 'categorical_crossentropy', metrics = ['accuracy'])
 
     beam_search_initial_input = Input(get_shape = (1,))
     rnn_decoder_with_beam_search = RNNDecoderLayerWithBeamSearch(beam_search_max_output_length, beam_size, decoder_rnn_cell, attention, target_embedding, mlp_classifier)
