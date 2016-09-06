@@ -237,9 +237,10 @@ class BiDirectionalLayer(Layer):
     '''
     def __init__(self, time_step_axis=1, **kwargs):
         self.time_step_axis = time_step_axis    # along which axis to reverse
+        self.supports_masking = True
         super(BiDirectionalLayer, self).__init__(**kwargs)
 
-    def call(self, inputs, mask=None):
+    def call(self, inputs, masks=None):
         """
         # Parameters
         ----------
@@ -255,7 +256,28 @@ class BiDirectionalLayer(Layer):
         right_to_left = reverse(right_to_left)
         if self.time_step_axis != 0:
             right_to_left = K.permute_dimensions(right_to_left, axes)
-        return K.concatenate([left_to_right, right_to_left], axis=-1)
+        output = K.concatenate([left_to_right, right_to_left], axis=-1)
+        if masks is not None:
+            mask_left_to_right = masks[0]
+            if K.ndim(mask_left_to_right) == K.ndim(left_to_right) - 1:
+                K.expand_dims(mask_left_to_right)
+                output = mask_left_to_right * output
+            else:
+                masks = K.concatenate(masks, axis=-1)
+                output = masks * output
+        return output
+
+    def compute_mask(self, inputs, masks):
+        if masks is None:
+            return None
+
+        left_to_right = inputs[0]
+
+        mask_left_to_right = masks[0]
+        if K.ndim(mask_left_to_right) == K.ndim(left_to_right) - 1:
+            return mask_left_to_right
+        else:
+            return K.concatenate(masks, axis=-1)
 
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0][:-1] + (input_shapes[0][-1] + input_shapes[1][-1],)
@@ -347,6 +369,8 @@ class AttentionLayer(Layer):
         ----------
         attention_context_dim: dimension of the inner attention context vector
         '''
+        self.supports_masking = True
+
         self.attention_context_dim = attention_context_dim
 
         self.init_W_a = initializations.get(init_W_a)
@@ -404,7 +428,7 @@ class AttentionLayer(Layer):
         super(AttentionLayer, self).build(input_shapes)
 
     @staticmethod
-    def _calc(s, h, W_a, U_a, v_a, tensors_to_debug=None):
+    def _calc(s, h, W_a, U_a, v_a, mask_h=None, tensors_to_debug=None):
         U_a_h = dot(h, U_a)    # nb_samples, time_steps, attention_context_dim
         W_a_s = K.expand_dims(dot(s, W_a), 1)    # nb_samples, 1, attention_context_dim
         if tensors_to_debug is not None:
@@ -423,7 +447,10 @@ class AttentionLayer(Layer):
         if tensors_to_debug is not None:
             tensors_to_debug.append(e)
 
-        e = K.exp (e)
+        e = K.exp (e)    # nb_samples, time_steps
+        if mask_h:    # nb_samples, time_steps
+            e = e * mask_h
+
         if tensors_to_debug is not None:
             tensors_to_debug.append(e)
 
@@ -443,12 +470,15 @@ class AttentionLayer(Layer):
         c = K.sum(c, axis=1)    # nb_samples, h_input_dim
         return c
 
-    def call(self, inputs, mask=None):
+    def call(self, inputs, masks=None):
         # s: nb_sample,input_dim
         # h: nb_samples,time_steps, h_input_dim
         s, h = inputs
-        return AttentionLayer._calc(s, h, self.W_a, self.U_a, self.v_a)
+        mask_h = None if masks is None else masks[0]
+        return AttentionLayer._calc(s, h, self.W_a, self.U_a, self.v_a, mask_h)
 
+    def compute_mask(self, inputs, masks):
+        return None
 
     def get_output_shape_for(self, input_shapes):
         return (input_shapes[1][0], input_shapes[1][2])
@@ -533,9 +563,15 @@ class RNNDecoderLayer(RNNDecoderLayerBase):
         input_shape, _ = input_shapes
         return (input_shape[0], input_shape[1], self.rnn_cell.output_dim)
 
-    def call(self, inputs, mask=None):
+    def call(self, inputs, masks=None):
         input_x, context = inputs
-        if mask: input_x_mask = mask[0]
+
+        input_x_mask = None
+        context_mask = None
+        if masks:
+            input_x_mask = masks[0]
+            context_mask = masks[1]
+
 
         input_x = self.embedding(input_x)
 
@@ -550,7 +586,7 @@ class RNNDecoderLayer(RNNDecoderLayerBase):
                                              input_x,
                                              initial_states,
                                              go_backwards=self.rnn_cell.go_backwards,
-                                             mask=input_x_mask,
+                                             masks=input_x_mask,
                                              constants=constants,
                                              unroll=self.rnn_cell.unroll)
 
