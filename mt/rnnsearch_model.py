@@ -28,22 +28,32 @@ def build_rnn_search_model(source_vacabuary_size,
                            optimizer = 'rmsprop',
                            beam_search_max_output_length,
                            beam_size,
+                           weight_regularizer = None,
                            devices = None):
-
-    # TODO: support weight regularizer
+    # TODO: apply constraints
 
     source_word = Input((None,), dtype = 'int32')
     source_word_mask = Input((None,), dtype = 'int32')
 
     # source_word = trim_right_padding(source_word)
-    source_embedding = Embedding(source_vacabuary_size, source_embedding_dim, weights = [source_initia_embedding])
-    # apply embedding
+    source_embedding = Embedding(source_vacabuary_size,
+                                 source_embedding_dim,
+                                 weights = [source_initia_embedding],
+                                 W_regularizer = weight_regularizer)
+
     encoder_output = source_embedding(source_word)
 
     # multiple bi-directional rnn layers
     for  encoder_rnn_output_dim in  encoder_rnn_output_dim_list:
-        recurrent_left_to_right = GRU(encoder_rnn_output_dim, return_sequences = True)
-        recurrent_right_to_left = GRU(encoder_rnn_output_dim, return_sequences = True, go_backwards = True)
+        recurrent_left_to_right = GRU(encoder_rnn_output_dim, return_sequences = True,
+                                      W_regularizer = weight_regularizer,
+                                      U_regularizer = weight_regularizer,
+                                      b_regularizer = weight_regularizer)
+        recurrent_right_to_left = GRU(encoder_rnn_output_dim, return_sequences = True,
+                                      go_backwards = True,
+                                      W_regularizer = weight_regularizer,
+                                      U_regularizer = weight_regularizer,
+                                      b_regularizer = weight_regularizer)
         h1 = recurrent_left_to_right(encoder_output, source_word_mask)
         h2 = recurrent_right_to_left(encoder_output, source_word_mask)
         encoder_output = BiDirectionalLayer()([h1, h2])
@@ -51,14 +61,24 @@ def build_rnn_search_model(source_vacabuary_size,
     # the output of the last bi-directional RNN layer is the source context
     source_context = encoder_output
     # attention
-    attention = AttentionLayer(attention_context_dim = attention_context_dim)
+    attention = AttentionLayer(attention_context_dim = attention_context_dim,
+                               W_a_regularizer = weight_regularizer,
+                               U_a_regularizer = weight_regularizer,
+                               v_a_regularizer = weight_regularizer)
 
     # decoder
     decoder_input_sequence = Input((None,), dtype = 'int32')  # starting with bos
     decoder_input_sequence_mask = Input((None,), dtype = 'int32')
 
-    decoder_rnn_cell = GRU(decoder_rnn_output_dim, return_sequences = True)
-    target_embedding = Embedding(target_vacabuary_size, target_embedding_dim, weights = [target_initia_embedding])
+    decoder_rnn_cell = GRU(decoder_rnn_output_dim, return_sequences = True,
+                            W_regularizer = weight_regularizer,
+                            U_regularizer = weight_regularizer,
+                            b_regularizer = weight_regularizer)
+
+    target_embedding = Embedding(target_vacabuary_size,
+                                 target_embedding_dim,
+                                 weights = [target_initia_embedding],
+                                 W_regularizer = weight_regularizer)
 
     rnn_decoder = RNNDecoderLayer(decoder_rnn_cell, attention, target_embedding)
 
@@ -68,10 +88,16 @@ def build_rnn_search_model(source_vacabuary_size,
 
     mlp_classifier_hidden_layers = []
     for decoder_hidden_unit_number, decoder_hidden_unit_activation_function in zip(decoder_hidden_unit_numbers, decoder_hidden_unit_activation_functions):
-        layer = Dense(decoder_hidden_unit_number, activation = decoder_hidden_unit_activation_function)
+        layer = Dense(decoder_hidden_unit_number,
+                      activation = decoder_hidden_unit_activation_function,
+                      W_regularizer = weight_regularizer,
+                      b_regularizer = weight_regularizer)
         mlp_classifier_hidden_layers.append(layer)
 
-    mlp_classifier_output_layer = Dense(output_dim = target_vacabuary_size, activation = 'softmax')
+    mlp_classifier_output_layer = Dense(output_dim = target_vacabuary_size,
+                                        activation = 'softmax' ,
+                                        W_regularizer = weight_regularizer,
+                                        b_regularizer = weight_regularizer)
 
     mlp_classifier = MLPClassifierLayer(mlp_classifier_hidden_layers, mlp_classifier_output_layer)
 
@@ -84,13 +110,11 @@ def build_rnn_search_model(source_vacabuary_size,
         rnn_search_model = convert_to_model_with_parallel_training(rnn_search_model, devices)
 
     # TODO: try other loss, such as importance sampling based loss, e.g., sampled_softmax_loss (this will need to extend Keras model, which assumes that the loss function does not hold any trainable parameters
-    # TODO: see if we need to apply constrains on gradient
     rnn_search_model.compile(optimizer = optimizer, loss = 'categorical_crossentropy', metrics = ['accuracy'])
 
     beam_search_initial_input = Input(get_shape = (1,))
     rnn_decoder_with_beam_search = RNNDecoderLayerWithBeamSearch(beam_search_max_output_length, beam_size, decoder_rnn_cell, attention, target_embedding, mlp_classifier)
 
-    # use average state to initialize rnn decoder init state
     beam_search_output_lattice = rnn_decoder_with_beam_search([beam_search_initial_input, source_context])
     rnn_search_runtime_model = Model(input = [source_word, source_word_mask, beam_search_initial_input], output = beam_search_output_lattice)
 
