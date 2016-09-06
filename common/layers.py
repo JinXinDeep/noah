@@ -13,6 +13,7 @@ from keras.layers.wrappers import Wrapper
 from keras.engine import InputSpec
 from keras import  initializations, regularizers, constraints
 
+
 #================================start of overridden layers========================================#
 # Copied from keras 1.0.8 and made small adpation so that we can set time steps can be None
 class TimeDistributed(Wrapper):
@@ -515,6 +516,25 @@ class RNNDecoderLayerBase(ComposedLayer):
 
         super(RNNDecoderLayerBase, self).build(input_shapes)
 
+    def get_initial_states(self, x , context, context_mask):
+        initial_states = self.rnn_cell.get_initial_states(x)
+        initial_state = initial_states[0]
+        if K._BACKEND == 'tensorflow':
+            dim_initial_state = K.int_shape(initial_state)[-1]
+            dim_context = K.int_shape(context)[-1]
+            if dim_initial_state == dim_context:
+                if context_mask:
+                    context *= K.expand_dims(context_mask)
+                    initial_state = K.sum(context , axis = -2) / K.sum (context_mask, keepdims = True)
+                else:
+                    initial_state = K.sum(context , axis = -2) / K.cast(K.shape(context)[K.ndim(context) - 2], dtype = K.dtype(context))
+
+                return [initial_state for _ in range(len(initial_states))]
+            else:
+                return initial_states
+        else:
+            return initial_states
+
     def call(self, inputs, mask = None):
         raise NotImplementedError
 
@@ -566,8 +586,9 @@ class RNNDecoderLayer(RNNDecoderLayerBase):
         if self.stateful:
             initial_states = self.rnn_cell.states
         else:
-            initial_states = self.rnn_cell.get_initial_states(input_x)
+            initial_states = self.get_initial_states(input_x, context, context_mask)
 
+        # TODO: in case that the context has same output dim as the rnn cell, use average state to initialize rnn decoder init state
         constants = self.rnn_cell.get_constants(input_x)
 
         last_output, outputs, states = K.rnn(lambda x, states: self.step(x, states, context, context_mask),
@@ -619,17 +640,18 @@ class RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
                (self.max_output_length, nb_samples, self.beam_size)]
 
     def call(self, inputs, mask = None):
-        initial_input, source_context = inputs
+        initial_input, context = inputs
         if K.ndim(initial_input) == 2:
             initial_input = K.squeeze(initial_input, 1)
 
         initial_input = self.embedding(initial_input)
-        # initial_input is 2D tensor: nb_samples, input_dim, convert to 3D tensor: nb_samples,1,input_dim
-        initial_state = self.rnn_cell. get_initial_states(K.expand_dims(initial_input, 1))[0]
 
         context_mask = None
         if mask:
             context_mask = mask[1]
+
+        # initial_input is 2D tensor: nb_samples, input_dim, convert to 3D tensor: nb_samples,1,input_dim
+        initial_state = self. get_initial_states(K.expand_dims(initial_input, 1), context, context_mask)[0]
 
         # initial_input is 2D tensor, 3D tensor is required
         constants = self.rnn_cell.get_constants(K.expand_dims(initial_input, 1))
@@ -640,7 +662,7 @@ class RNNDecoderLayerWithBeamSearch(RNNDecoderLayerBase):
             return classifier_output, rnn_output
 
         return  beam_search(initial_input, initial_state,
-                            source_context, self.embedding,
+                            context, self.embedding,
                             step_func = step,
                             beam_size = self.beam_size, max_length = self.max_output_length)
 
