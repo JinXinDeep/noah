@@ -5,12 +5,13 @@ NMT translation model
 '''
 
 from keras.models import Model
-from keras.layers import Input, GRU, Embedding, Dense
+from keras.layers import Input, GRU, Embedding, Dense, Dropout
 import keras.backend as K
 
 from common import get_k_best_from_lattice, BiDirectionalLayer, AttentionLayer, RNNDecoderLayer, RNNDecoderLayerWithBeamSearch, MLPClassifierLayer, TimeDistributed, categorical_crossentropy_ex, convert_to_model_with_parallel_training
 import numpy as np
 from nltk.translate.bleu_score import corpus_bleu
+
 
 def build_rnn_search_model(source_vacabuary_size,
                            source_embedding_dim,
@@ -18,6 +19,7 @@ def build_rnn_search_model(source_vacabuary_size,
                            encoder_rnn_output_dim_list,
                            attention_context_dim,
                            decoder_rnn_output_dim,
+                           decoder_rnn_output_dropout_rate,
                            target_vacabuary_size,
                            target_embedding_dim,
                            target_initia_embedding,
@@ -51,13 +53,18 @@ def build_rnn_search_model(source_vacabuary_size,
     attention = AttentionLayer(attention_context_dim = attention_context_dim)
 
     # decoder
-    decoder_rnn_cell = GRU(decoder_rnn_output_dim, return_sequences = True)
-    target_embedding = Embedding(target_vacabuary_size, target_embedding_dim, weights = [target_initia_embedding])
     decoder_input_sequence = Input((None,), dtype = 'int32')  # starting with bos
     decoder_input_sequence_mask = Input((None,), dtype = 'int32')
+
+    decoder_rnn_cell = GRU(decoder_rnn_output_dim, return_sequences = True)
+    target_embedding = Embedding(target_vacabuary_size, target_embedding_dim, weights = [target_initia_embedding])
+
     rnn_decoder = RNNDecoderLayer(decoder_rnn_cell, attention, target_embedding)
+
     rnn_decoder_output = rnn_decoder([decoder_input_sequence, source_context], [decoder_input_sequence_mask, source_word_mask])
-    # TODO: drop out of rnn decoder output
+    rnn_decoder_output_dropout = Dropout(decoder_rnn_output_dropout_rate)
+    rnn_decoder_output = rnn_decoder_output_dropout(rnn_decoder_output)
+
     mlp_classifier_hidden_layers = []
     for decoder_hidden_unit_number, decoder_hidden_unit_activation_function in zip(decoder_hidden_unit_numbers, decoder_hidden_unit_activation_functions):
         layer = Dense(decoder_hidden_unit_number, activation = decoder_hidden_unit_activation_function)
